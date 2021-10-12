@@ -1,11 +1,19 @@
-# Copyright (c) 2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2017-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -59,6 +67,10 @@ class _TestX509(unittest.TestCase):
         self.assertEqual(cert.subject, X509Name(subject))
         self.assertEqual(cert.issuer, X509Name(issuer if issuer else subject))
         self.assertEqual(cert.key_data, self._pubdata)
+
+        if isinstance(comment, str):
+            comment = comment.encode('utf-8')
+
         self.assertEqual(cert.comment, comment)
 
         return cert
@@ -102,17 +114,17 @@ class _TestX509(unittest.TestCase):
         self.assertEqual(cert.user_principals, ['name'])
         self.assertEqual(cert.host_principals, ['name'])
 
+    def test_comment(self):
+        """Test X.509 certificate generation with comment"""
+
+        self.generate_certificate(comment=b'comment')
+        self.generate_certificate(comment='comment')
+
     def test_unknown_hash(self):
         """Test X.509 certificate generation with unknown hash"""
 
         with self.assertRaises(ValueError):
             self.generate_certificate(hash_alg='xxx')
-
-    def test_invalid_comment(self):
-        """Test X.509 certificate generation with invalid comment"""
-
-        with self.assertRaises(ValueError):
-            self.generate_certificate(comment=b'\xff')
 
     def test_valid_self(self):
         """Test validation of X.509 self-signed certificate"""
@@ -178,20 +190,6 @@ class _TestX509(unittest.TestCase):
         int_ca = self.generate_certificate('OU=int', 'OU=root',
                                            ca=True, ca_path_len=0,
                                            valid_before=time.time() - 60)
-
-        cert = self.generate_certificate('OU=user', 'OU=int')
-
-        with self.assertRaises(ValueError):
-            cert.validate([int_ca, root_ca], None, None, None)
-
-    def test_expired_root(self):
-        """Test failed validation of expired X.509 root CA"""
-
-        root_ca = self.generate_certificate('OU=root', ca=True, ca_path_len=1,
-                                            valid_before=time.time() - 60)
-
-        int_ca = self.generate_certificate('OU=int', 'OU=root',
-                                           ca=True, ca_path_len=0)
 
         cert = self.generate_certificate('OU=user', 'OU=int')
 

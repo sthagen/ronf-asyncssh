@@ -1,18 +1,24 @@
-# Copyright (c) 2015-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
-"""Parser for SSH known_hosts files"""
-
-import socket
+"""Parser for SSH authorized_keys files"""
 
 try:
     from .crypto import X509NamePattern
@@ -20,7 +26,7 @@ try:
 except ImportError: # pragma: no cover
     _x509_available = False
 
-from .misc import ip_address
+from .misc import ip_address, read_file
 from .pattern import HostPatternList, WildcardPatternList
 from .public_key import KeyImportError, import_public_key
 from .public_key import import_certificate, import_certificate_subject
@@ -182,14 +188,13 @@ class _SSHAuthorizedKeyEntry:
 
         return line[idx:].strip()
 
-    def match_options(self, client_addr, cert_principals, cert_subject=None):
+    def match_options(self, client_host, client_addr,
+                      cert_principals, cert_subject=None):
         """Match "from", "principals" and "subject" options in entry"""
 
         from_patterns = self.options.get('from')
 
         if from_patterns:
-            client_host, _ = socket.getnameinfo((client_addr, 0),
-                                                socket.NI_NUMERICSERV)
             client_ip = ip_address(client_addr)
 
             if not all(pattern.matches(client_host, client_addr, client_ip)
@@ -217,12 +222,18 @@ class _SSHAuthorizedKeyEntry:
 class SSHAuthorizedKeys:
     """An SSH authorized keys list"""
 
-    def __init__(self, data):
+    def __init__(self, authorized_keys=None):
         self._user_entries = []
         self._ca_entries = []
         self._x509_entries = []
 
-        for line in data.splitlines():
+        if authorized_keys:
+            self.load(authorized_keys)
+
+    def load(self, authorized_keys):
+        """Load authorized keys data into this object"""
+
+        for line in authorized_keys.splitlines():
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
@@ -244,17 +255,19 @@ class SSHAuthorizedKeys:
                 not self._x509_entries):
             raise ValueError('No valid entries found')
 
-    def validate(self, key, client_addr, cert_principals=None, ca=False):
+    def validate(self, key, client_host, client_addr,
+                 cert_principals=None, ca=False):
         """Return whether a public key or CA is valid for authentication"""
 
         for entry in self._ca_entries if ca else self._user_entries:
             if (entry.key == key and
-                    entry.match_options(client_addr, cert_principals)):
+                    entry.match_options(client_host, client_addr,
+                                        cert_principals)):
                 return entry.options
 
         return None
 
-    def validate_x509(self, cert, client_addr):
+    def validate_x509(self, cert, client_host, client_addr):
         """Return whether an X.509 certificate is valid for authentication"""
 
         for entry in self._x509_entries:
@@ -263,8 +276,8 @@ class SSHAuthorizedKeys:
                      cert.subject != entry.cert.subject)):
                 continue # pragma: no cover (work around bug in coverage tool)
 
-            if entry.match_options(client_addr, cert.user_principals,
-                                   cert.subject):
+            if entry.match_options(client_host, client_addr,
+                                   cert.user_principals, cert.subject):
                 return entry.options, entry.cert
 
         return None, None
@@ -275,8 +288,9 @@ def import_authorized_keys(data):
        This function imports public keys and associated options in
        OpenSSH authorized keys format.
 
-       :param str data:
+       :param data:
            The key data to import.
+       :type data: `str`
 
        :returns: An :class:`SSHAuthorizedKeys` object
 
@@ -285,18 +299,26 @@ def import_authorized_keys(data):
     return SSHAuthorizedKeys(data)
 
 
-def read_authorized_keys(filename):
-    """Read SSH authorized keys from a file
+def read_authorized_keys(filelist):
+    """Read SSH authorized keys from a file or list of files
 
        This function reads public keys and associated options in
-       OpenSSH authorized_keys format from a file.
+       OpenSSH authorized_keys format from a file or list of files.
 
-       :param str filename:
-           The file to read the keys from.
+       :param filelist:
+           The file or list of files to read the keys from.
+       :type filenlist: `str` or `list` of `str`
 
        :returns: An :class:`SSHAuthorizedKeys` object
 
     """
 
-    with open(filename, 'r') as f:
-        return import_authorized_keys(f.read())
+    authorized_keys = SSHAuthorizedKeys()
+
+    if isinstance(filelist, str):
+        filelist = [filelist]
+
+    for filename in filelist:
+        authorized_keys.load(read_file(filename, 'r'))
+
+    return authorized_keys

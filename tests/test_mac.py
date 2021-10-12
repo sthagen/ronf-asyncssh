@@ -1,11 +1,19 @@
-# Copyright (c) 2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -24,15 +32,15 @@ class _TestMAC(unittest.TestCase):
     def test_mac_algs(self):
         """Unit test MAC algorithms"""
 
-        for alg in get_mac_algs():
-            with self.subTest(alg=alg):
-                keysize, _, _ = get_mac_params(alg)
+        for mac_alg in get_mac_algs():
+            with self.subTest(mac_alg=mac_alg):
+                mac_keysize, _, _ = get_mac_params(mac_alg)
 
-                key = os.urandom(keysize)
+                mac_key = os.urandom(mac_keysize)
                 packet = os.urandom(256)
 
-                enc_mac = get_mac(alg, key)
-                dec_mac = get_mac(alg, key)
+                enc_mac = get_mac(mac_alg, mac_key)
+                dec_mac = get_mac(mac_alg, mac_key)
 
                 badpacket = bytearray(packet)
                 badpacket[-1] ^= 0xff
@@ -50,13 +58,14 @@ class _TestMAC(unittest.TestCase):
         """Unit test some unused parts of the UMAC wrapper code"""
 
         try:
+            # pylint: disable=import-outside-toplevel
             from asyncssh.crypto import umac32
         except ImportError: # pragma: no cover
             self.skipTest('umac not available')
 
-        key = os.urandom(16)
+        mac_key = os.urandom(16)
 
-        mac1 = umac32(key)
+        mac1 = umac32(mac_key)
         mac1.update(b'test')
 
         mac2 = mac1.copy()

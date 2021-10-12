@@ -1,11 +1,19 @@
-# Copyright (c) 2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2017-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -18,18 +26,15 @@ import re
 import sys
 
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.hashes import MD5, SHA1, SHA224
-from cryptography.hazmat.primitives.hashes import SHA256, SHA384, SHA512
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.serialization import PublicFormat
 from cryptography import x509
 
 from OpenSSL import crypto
 
-from ...asn1 import IA5String, der_decode, der_encode
+from ..asn1 import IA5String, der_decode, der_encode
+from .misc import hashes
 
-
-# pylint: disable=bad-whitespace
 
 _purpose_to_oid = {
     'serverAuth':        x509.ExtendedKeyUsageOID.SERVER_AUTH,
@@ -37,26 +42,39 @@ _purpose_to_oid = {
     'secureShellClient': x509.ObjectIdentifier('1.3.6.1.5.5.7.3.21'),
     'secureShellServer': x509.ObjectIdentifier('1.3.6.1.5.5.7.3.22')}
 
-# pylint: enable=bad-whitespace
-
-_purpose_any = x509.ObjectIdentifier('2.5.29.37.0')
-
-_hashes = {h.name: h for h in (MD5, SHA1, SHA224, SHA256, SHA384, SHA512)}
+_purpose_any = '2.5.29.37.0'
 
 _nscomment_oid = x509.ObjectIdentifier('2.16.840.1.113730.1.13')
 
+_datetime_min = datetime.utcfromtimestamp(0).replace(microsecond=1,
+                                                     tzinfo=timezone.utc)
+
+_datetime_32bit_max = datetime.utcfromtimestamp(2**31 - 1).replace(
+    tzinfo=timezone.utc)
+
 if sys.platform == 'win32': # pragma: no cover
     # Windows' datetime.max is year 9999, but timestamps that large don't work
-    _gen_time_max = datetime(2999, 12, 31, 23, 59, 59, 999999,
-                             tzinfo=timezone.utc).timestamp() - 1
+    _datetime_max = datetime.max.replace(year=2999, tzinfo=timezone.utc)
 else:
-    _gen_time_max = datetime.max.replace(tzinfo=timezone.utc).timestamp() - 1
+    _datetime_max = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def _to_generalized_time(t):
     """Convert a timestamp value to a datetime"""
 
-    return datetime.utcfromtimestamp(max(1, min(t, _gen_time_max)))
+    if t <= 0:
+        return _datetime_min
+    else:
+        try:
+            return datetime.utcfromtimestamp(t).replace(tzinfo=timezone.utc)
+        except (OSError, OverflowError):
+            try:
+                # Work around a bug in cryptography which shows up on
+                # systems with a small time_t.
+                datetime.utcfromtimestamp(_datetime_max.timestamp() - 1)
+                return _datetime_max
+            except (OSError, OverflowError): # pragma: no cover
+                return _datetime_32bit_max
 
 
 def _to_purpose_oids(purposes):
@@ -66,12 +84,12 @@ def _to_purpose_oids(purposes):
         purposes = [p.strip() for p in purposes.split(',')]
 
     if not purposes or 'any' in purposes or _purpose_any in purposes:
-        purposes = None
+        purpose_oids = None
     else:
-        purposes = set(_purpose_to_oid.get(p) or x509.ObjectIdentifier(p)
-                       for p in purposes)
+        purpose_oids = set(_purpose_to_oid.get(p) or x509.ObjectIdentifier(p)
+                           for p in purposes)
 
-    return purposes
+    return purpose_oids
 
 
 def _encode_user_principals(principals):
@@ -86,7 +104,7 @@ def _encode_user_principals(principals):
 def _encode_host_principals(principals):
     """Encode host principals as DNS names or IP addresses"""
 
-    def _encode_host(name):
+    def _encode_host(name: str) -> x509.GeneralName:
         """Encode a host principal as a DNS name or IP address"""
 
         try:
@@ -108,8 +126,6 @@ class X509Name(x509.Name):
     _split_rdn = re.compile(r'(?:[^+\\]+|\\.)+')
     _split_name = re.compile(r'(?:[^,\\]+|\\.)+')
 
-# pylint: disable=bad-whitespace
-
     _attrs = (
         ('C',  x509.NameOID.COUNTRY_NAME),
         ('ST', x509.NameOID.STATE_OR_PROVINCE_NAME),
@@ -119,18 +135,18 @@ class X509Name(x509.Name):
         ('CN', x509.NameOID.COMMON_NAME),
         ('DC', x509.NameOID.DOMAIN_COMPONENT))
 
-# pylint: enable=bad-whitespace
-
     _to_oid = dict((k, v) for k, v in _attrs)
     _from_oid = dict((v, k) for k, v in _attrs)
 
     def __init__(self, name):
         if isinstance(name, str):
-            name = self._parse_name(name)
+            rdns = self._parse_name(name)
         elif isinstance(name, x509.Name):
-            name = name.rdns
+            rdns = name.rdns
+        else:
+            rdns = name
 
-        super().__init__(name)
+        super().__init__(rdns)
 
     def __str__(self):
         return ','.join(self._format_rdn(rdn) for rdn in self.rdns)
@@ -239,11 +255,10 @@ class X509Certificate:
 
         try:
             comment = cert.extensions.get_extension_for_oid(_nscomment_oid)
-            self.comment = str(der_decode(comment.value.value))
+            comment_der = comment.value.value
+            self.comment = der_decode(comment_der).value
         except x509.ExtensionNotFound:
             self.comment = None
-        except UnicodeDecodeError:
-            raise ValueError('Invalid character in comment') from None
 
     def __eq__(self, other):
         return isinstance(other, type(self)) and self.data == other.data
@@ -254,9 +269,9 @@ class X509Certificate:
     def validate(self, trust_store, purposes, user_principal, host_principal):
         """Validate an X.509 certificate"""
 
-        purposes = _to_purpose_oids(purposes)
+        purpose_oids = _to_purpose_oids(purposes)
 
-        if purposes and self.purposes and not purposes & self.purposes:
+        if purpose_oids and self.purposes and not purpose_oids & self.purposes:
             raise ValueError('Certificate purpose mismatch')
 
         if user_principal and user_principal not in self.user_principals:
@@ -283,61 +298,81 @@ def generate_x509_certificate(signing_key, key, subject, issuer, serial,
                               hash_alg, comment):
     """Generate a new X.509 certificate"""
 
+    builder = x509.CertificateBuilder()
+
     subject = X509Name(subject)
     issuer = X509Name(issuer) if issuer else subject
-    valid_after = _to_generalized_time(valid_after)
-    valid_before = _to_generalized_time(valid_before)
-    purposes = _to_purpose_oids(purposes)
     self_signed = subject == issuer
+
+    builder = builder.subject_name(subject)
+    builder = builder.issuer_name(issuer)
 
     if serial is None:
         serial = x509.random_serial_number()
 
-    builder = x509.CertificateBuilder()
-    builder = builder.subject_name(subject)
-    builder = builder.issuer_name(issuer)
     builder = builder.serial_number(serial)
-    builder = builder.not_valid_before(valid_after)
-    builder = builder.not_valid_after(valid_before)
+
+    builder = builder.not_valid_before(_to_generalized_time(valid_after))
+    builder = builder.not_valid_after(_to_generalized_time(valid_before))
+
     builder = builder.public_key(key.pyca_key)
 
     if ca:
-        basic_constraints = x509.BasicConstraints(
-            ca=True, path_length=ca_path_len)
-        key_usage = x509.KeyUsage(
-            digital_signature=True, content_commitment=False,
-            key_encipherment=False, data_encipherment=False,
-            key_agreement=False, key_cert_sign=True, crl_sign=True,
-            encipher_only=False, decipher_only=False)
+        basic_constraints = x509.BasicConstraints(ca=True,
+                                                  path_length=ca_path_len)
+        key_usage = x509.KeyUsage(digital_signature=False,
+                                  content_commitment=False,
+                                  key_encipherment=False,
+                                  data_encipherment=False,
+                                  key_agreement=False, key_cert_sign=True,
+                                  crl_sign=True, encipher_only=False,
+                                  decipher_only=False)
     else:
         basic_constraints = x509.BasicConstraints(ca=False, path_length=None)
-        key_usage = x509.KeyUsage(
-            digital_signature=True, content_commitment=False,
-            key_encipherment=True, data_encipherment=False,
-            key_agreement=False, key_cert_sign=self_signed, crl_sign=False,
-            encipher_only=False, decipher_only=False)
+        key_usage = x509.KeyUsage(digital_signature=True,
+                                  content_commitment=False,
+                                  key_encipherment=True,
+                                  data_encipherment=False,
+                                  key_agreement=True, key_cert_sign=False,
+                                  crl_sign=False, encipher_only=False,
+                                  decipher_only=False)
 
     builder = builder.add_extension(basic_constraints, critical=True)
-    builder = builder.add_extension(key_usage, critical=True)
 
-    if purposes:
-        builder = builder.add_extension(
-            x509.ExtendedKeyUsage(purposes), critical=False)
+    if ca or not self_signed:
+        builder = builder.add_extension(key_usage, critical=True)
 
-    sans = (_encode_user_principals(user_principals) +
-            _encode_host_principals(host_principals))
+    purpose_oids = _to_purpose_oids(purposes)
+
+    if purpose_oids:
+        builder = builder.add_extension(x509.ExtendedKeyUsage(purpose_oids),
+                                        critical=False)
+
+    skid = x509.SubjectKeyIdentifier.from_public_key(key.pyca_key)
+    builder = builder.add_extension(skid, critical=False)
+
+    if not self_signed:
+        issuer_pk = signing_key.convert_to_public().pyca_key
+        akid = x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_pk)
+        builder = builder.add_extension(akid, critical=False)
+
+    sans = _encode_user_principals(user_principals) + \
+           _encode_host_principals(host_principals)
 
     if sans:
-        builder = builder.add_extension(
-            x509.SubjectAlternativeName(sans), critical=False)
+        builder = builder.add_extension(x509.SubjectAlternativeName(sans),
+                                        critical=False)
 
     if comment:
+        if isinstance(comment, str):
+            comment = comment.encode('utf-8')
+
         comment = der_encode(IA5String(comment))
         builder = builder.add_extension(
             x509.UnrecognizedExtension(_nscomment_oid, comment), critical=False)
 
     try:
-        hash_alg = _hashes[hash_alg]()
+        hash_alg = hashes[hash_alg]() if hash_alg else None
     except KeyError:
         raise ValueError('Unknown hash algorithm') from None
 

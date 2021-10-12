@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -16,34 +24,21 @@
 class SSHSession:
     """SSH session handler"""
 
-    def connection_made(self, chan):
-        """Called when a channel is opened successfully
-
-           This method is called when a channel is opened successfully. The
-           channel parameter should be stored if needed for later use.
-
-           :param chan:
-               The channel which was successfully opened.
-           :type chan: :class:`SSHClientChannel`
-
-        """
-        pass # pragma: no cover
+    # pylint: disable=no-self-use,unused-argument
 
     def connection_lost(self, exc):
         """Called when a channel is closed
 
            This method is called when a channel is closed. If the channel
-           is shut down cleanly, *exc* will be ``None``. Otherwise, it
+           is shut down cleanly, *exc* will be `None`. Otherwise, it
            will be an exception explaining the reason for the channel close.
 
            :param exc:
                The exception which caused the channel to close, or
-               ``None`` if the channel closed cleanly.
+               `None` if the channel closed cleanly.
            :type exc: :class:`Exception`
 
         """
-
-        pass # pragma: no cover
 
     def session_started(self):
         """Called when the session is started
@@ -55,8 +50,6 @@ class SSHSession:
            be called immediately after the connection is opened.
 
         """
-
-        pass # pragma: no cover
 
     def data_received(self, data, datatype):
         """Called when data is received on the channel
@@ -72,18 +65,16 @@ class SSHSession:
            :param datatype:
                The extended data type of the data, from :ref:`extended
                data types <ExtendedDataTypes>`
-           :type data: str or bytes
+           :type data: `str` or `bytes`
 
         """
-
-        pass # pragma: no cover
 
     def eof_received(self):
         """Called when EOF is received on the channel
 
            This method is called when an end-of-file indication is received
            on the channel, after which no more data will be received. If this
-           method returns ``True``, the channel remains half open and data
+           method returns `True`, the channel remains half open and data
            may still be sent. Otherwise, the channel is automatically closed
            after this method returns. This is the default behavior for
            classes derived directly from :class:`SSHSession`, but not when
@@ -93,8 +84,6 @@ class SSHSession:
            indication is received.
 
         """
-
-        # pylint: disable=no-self-use
 
         return False # pragma: no cover
 
@@ -109,8 +98,6 @@ class SSHSession:
 
         """
 
-        pass # pragma: no cover
-
     def resume_writing(self):
         """Called when the write buffer has sufficiently drained
 
@@ -120,8 +107,6 @@ class SSHSession:
 
         """
 
-        pass # pragma: no cover
-
 
 class SSHClientSession(SSHSession):
     """SSH client session handler
@@ -129,7 +114,7 @@ class SSHClientSession(SSHSession):
        Applications should subclass this when implementing an SSH client
        session handler. The functions listed below should be implemented
        to define application-specific behavior. In particular, the standard
-       ``asyncio`` protocol methods such as :meth:`connection_made`,
+       `asyncio` protocol methods such as :meth:`connection_made`,
        :meth:`connection_lost`, :meth:`data_received`, :meth:`eof_received`,
        :meth:`pause_writing`, and :meth:`resume_writing` are all supported.
        In addition, :meth:`session_started` is called as soon as the SSH
@@ -141,27 +126,40 @@ class SSHClientSession(SSHSession):
 
     """
 
+    # pylint: disable=no-self-use,unused-argument
+
+    def connection_made(self, chan):
+        """Called when a channel is opened successfully
+
+           This method is called when a channel is opened successfully. The
+           channel parameter should be stored if needed for later use.
+
+           :param chan:
+               The channel which was successfully opened.
+           :type chan: :class:`SSHClientChannel`
+
+        """
+
     def xon_xoff_requested(self, client_can_do):
         """XON/XOFF flow control has been enabled or disabled
 
            This method is called to notify the client whether or not
            to enable XON/XOFF flow control. If client_can_do is
-           ``True`` and output is being sent to an interactive
+           `True` and output is being sent to an interactive
            terminal the application should allow input of Control-S
            and Control-Q to pause and resume output, respectively.
-           If client_can_do is ``False``, Control-S and Control-Q
+           If client_can_do is `False`, Control-S and Control-Q
            should be treated as normal input and passed through to
            the server. Non-interactive applications can ignore this
            request.
 
            By default, this message is ignored.
 
-           :param bool client_can_do:
+           :param client_can_do:
                Whether or not to enable XON/XOFF flow control
+           :type client_can_do: `bool`
 
         """
-
-        pass # pragma: no cover
 
     def exit_status_received(self, status):
         """A remote exit status has been received for this session
@@ -174,12 +172,11 @@ class SSHClientSession(SSHSession):
 
            By default, the exit status is ignored.
 
-           :param int status:
+           :param status:
                The exit status returned by the remote process
+           :type status: `int`
 
         """
-
-        pass # pragma: no cover
 
     def exit_signal_received(self, signal, core_dumped, msg, lang):
         """A remote exit signal has been received for this session
@@ -192,18 +189,20 @@ class SSHClientSession(SSHSession):
 
            By default, exit signals are ignored.
 
-           :param str signal:
+           :param signal:
                The signal which caused the remote process to exit
-           :param bool core_dumped:
+           :param core_dumped:
                Whether or not the remote process dumped core
            :param msg:
                Details about what error occurred
            :param lang:
                The language the error message is in
+           :type signal: `str`
+           :type core_dumped: `bool`
+           :type msg: `str`
+           :type lang: `str`
 
         """
-
-        pass # pragma: no cover
 
 
 class SSHServerSession(SSHSession):
@@ -212,7 +211,7 @@ class SSHServerSession(SSHSession):
        Applications should subclass this when implementing an SSH server
        session handler. The functions listed below should be implemented
        to define application-specific behavior. In particular, the
-       standard ``asyncio`` protocol methods such as :meth:`connection_made`,
+       standard `asyncio` protocol methods such as :meth:`connection_made`,
        :meth:`connection_lost`, :meth:`data_received`, :meth:`eof_received`,
        :meth:`pause_writing`, and :meth:`resume_writing` are all supported.
        In addition, :meth:`pty_requested` is called when the client requests a
@@ -226,43 +225,58 @@ class SSHServerSession(SSHSession):
 
     """
 
+    # pylint: disable=no-self-use,unused-argument
+
+    def connection_made(self, chan):
+        """Called when a channel is opened successfully
+
+           This method is called when a channel is opened successfully. The
+           channel parameter should be stored if needed for later use.
+
+           :param chan:
+               The channel which was successfully opened.
+           :type chan: :class:`SSHServerChannel`
+
+        """
+
     def pty_requested(self, term_type, term_size, term_modes):
         """A psuedo-terminal has been requested
 
            This method is called when the client sends a request to allocate
            a pseudo-terminal with the requested terminal type, size, and
-           POSIX terminal modes. This method should return ``True`` if the
+           POSIX terminal modes. This method should return `True` if the
            request for the pseudo-terminal is accepted. Otherwise, it should
-           return ``False`` to reject the request.
+           return `False` to reject the request.
 
            By default, requests to allocate a pseudo-terminal are accepted
            but nothing is done with the associated terminal information.
            Applications wishing to use this information should implement
-           this method and have it return ``True``, or call
+           this method and have it return `True`, or call
            :meth:`get_terminal_type() <SSHServerChannel.get_terminal_type>`,
            :meth:`get_terminal_size() <SSHServerChannel.get_terminal_size>`,
            or :meth:`get_terminal_mode() <SSHServerChannel.get_terminal_mode>`
            on the :class:`SSHServerChannel` to get the information they need
            after a shell, command, or subsystem is started.
 
-           :param str term_type:
+           :param term_type:
                Terminal type to set for this session
-           :param tuple term_size:
+           :param term_size:
                Terminal size to set for this session provided as a
-               tuple of four integers: the width and height of the
+               tuple of four `int` values: the width and height of the
                terminal in characters followed by the width and height
                of the terminal in pixels
-           :param dictionary term_modes:
+           :param term_modes:
                POSIX terminal modes to set for this session, where keys
                are taken from :ref:`POSIX terminal modes <PTYModes>` with
                values defined in section 8 of :rfc:`RFC 4254 <4254#section-8>`.
+           :type term_type: `str`
+           :type term_size: tuple of 4 `int` values
+           :type term_modes: `dict`
 
-           :returns: A bool indicating if the request for a
+           :returns: A `bool` indicating if the request for a
                      pseudo-terminal was allowed or not
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
 
         return True # pragma: no cover
 
@@ -277,20 +291,20 @@ class SSHServerSession(SSHSession):
            wishing to use the terminal size can implement this method
            to get notified whenever it changes.
 
-           :param int width:
+           :param width:
                The width of the terminal in characters
-           :param int height:
+           :param height:
                The height of the terminal in characters
-           :param int pixwidth: (optional)
+           :param pixwidth: (optional)
                The width of the terminal in pixels
-           :param int pixheight: (optional)
+           :param pixheight: (optional)
                The height of the terminal in pixels
+           :type width: `int`
+           :type height: `int`
+           :type pixwidth: `int`
+           :type pixheight: `int`
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
-
-        pass # pragma: no cover
 
     def shell_requested(self):
         """The client has requested a shell
@@ -298,20 +312,18 @@ class SSHServerSession(SSHSession):
            This method should be implemented by the application to
            perform whatever processing is required when a client makes
            a request to open an interactive shell. It should return
-           ``True`` to accept the request, or ``False`` to reject it.
+           `True` to accept the request, or `False` to reject it.
 
-           If the application returns ``True``, the :meth:`session_started`
+           If the application returns `True`, the :meth:`session_started`
            method will be called once the channel is fully open. No output
            should be sent until this method is called.
 
-           By default this method returns ``False`` to reject all requests.
+           By default this method returns `False` to reject all requests.
 
-           :returns: A bool indicating if the shell request was
+           :returns: A `bool` indicating if the shell request was
                      allowed or not
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
 
         return False # pragma: no cover
 
@@ -320,24 +332,23 @@ class SSHServerSession(SSHSession):
 
            This method should be implemented by the application to
            perform whatever processing is required when a client makes
-           a request to execute a command. It should return ``True`` to
-           accept the request, or ``False`` to reject it.
+           a request to execute a command. It should return `True` to
+           accept the request, or `False` to reject it.
 
-           If the application returns ``True``, the :meth:`session_started`
+           If the application returns `True`, the :meth:`session_started`
            method will be called once the channel is fully open. No output
            should be sent until this method is called.
 
-           By default this method returns ``False`` to reject all requests.
+           By default this method returns `False` to reject all requests.
 
-           :param str command:
+           :param command:
                The command the client has requested to execute
+           :type command: `str`
 
-           :returns: A bool indicating if the exec request was
+           :returns: A `bool` indicating if the exec request was
                      allowed or not
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
 
         return False # pragma: no cover
 
@@ -346,24 +357,23 @@ class SSHServerSession(SSHSession):
 
            This method should be implemented by the application to
            perform whatever processing is required when a client makes
-           a request to start a subsystem. It should return ``True`` to
-           accept the request, or ``False`` to reject it.
+           a request to start a subsystem. It should return `True` to
+           accept the request, or `False` to reject it.
 
-           If the application returns ``True``, the :meth:`session_started`
+           If the application returns `True`, the :meth:`session_started`
            method will be called once the channel is fully open. No output
            should be sent until this method is called.
 
-           By default this method returns ``False`` to reject all requests.
+           By default this method returns `False` to reject all requests.
 
-           :param str subsystem:
+           :param subsystem:
                The subsystem to start
+           :type subsystem: `str`
 
-           :returns: A bool indicating if the request to open the
+           :returns: A `bool` indicating if the request to open the
                      subsystem was allowed or not
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
 
         return False # pragma: no cover
 
@@ -372,21 +382,20 @@ class SSHServerSession(SSHSession):
 
            This method is called when the client requests that the
            server perform a break operation on the terminal. If the
-           break is performed, this method should return ``True``.
-           Otherwise, it should return ``False``.
+           break is performed, this method should return `True`.
+           Otherwise, it should return `False`.
 
-           By default, this method returns ``False`` indicating that
+           By default, this method returns `False` indicating that
            no break was performed.
 
-           :param int msec:
+           :param msec:
                The duration of the break in milliseconds
+           :type msec: `int`
 
-           :returns: A bool to indicate if the break operation was
+           :returns: A `bool` to indicate if the break operation was
                      performed or not
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
 
         return False # pragma: no cover
 
@@ -399,10 +408,6 @@ class SSHServerSession(SSHSession):
            By default, signals from the client are ignored.
 
         """
-
-        # pylint: disable=no-self-use,unused-argument
-
-        pass # pragma: no cover
 
 
 class SSHTCPSession(SSHSession):
@@ -434,6 +439,18 @@ class SSHTCPSession(SSHSession):
        Received data will be passed to the :meth:`data_received` method.
 
     """
+
+    def connection_made(self, chan):
+        """Called when a channel is opened successfully
+
+           This method is called when a channel is opened successfully. The
+           channel parameter should be stored if needed for later use.
+
+           :param chan:
+               The channel which was successfully opened.
+           :type chan: :class:`SSHTCPChannel`
+
+        """
 
 
 class SSHUNIXSession(SSHSession):
@@ -467,3 +484,15 @@ class SSHUNIXSession(SSHSession):
        Received data will be passed to the :meth:`data_received` method.
 
     """
+
+    def connection_made(self, chan):
+        """Called when a channel is opened successfully
+
+           This method is called when a channel is opened successfully. The
+           channel parameter should be stored if needed for later use.
+
+           :param chan:
+               The channel which was successfully opened.
+           :type chan: :class:`SSHUNIXChannel`
+
+        """

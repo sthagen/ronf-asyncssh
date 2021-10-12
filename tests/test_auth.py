@@ -1,11 +1,19 @@
-# Copyright (c) 2015-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -23,9 +31,7 @@ from asyncssh.auth import MSG_USERAUTH_GSSAPI_RESPONSE
 from asyncssh.constants import MSG_USERAUTH_REQUEST, MSG_USERAUTH_FAILURE
 from asyncssh.constants import MSG_USERAUTH_SUCCESS
 from asyncssh.gss import GSSClient, GSSServer
-from asyncssh.misc import DisconnectError, PasswordChangeRequired
 from asyncssh.packet import SSHPacket, Boolean, Byte, NameList, String
-from asyncssh.public_key import SSHLocalKeyPair
 
 from .util import asynctest, gss_available, patch_gss
 from .util import AsyncTestCase, ConnectionStub
@@ -57,6 +63,14 @@ class _AuthConnectionStub(ConnectionStub):
 
         return String('') + self._get_userauth_request_packet(method, args)
 
+    def send_userauth_packet(self, pkttype, *args, handler=None,
+                             trivial=True):
+        """Send a user authentication packet"""
+
+        # pylint: disable=unused-argument
+
+        self.send_packet(pkttype, *args, handler=handler)
+
 
 class _AuthClientStub(_AuthConnectionStub):
     """Stub class for client connection"""
@@ -69,18 +83,23 @@ class _AuthClientStub(_AuthConnectionStub):
         return client_conn, client_conn.get_peer()
 
     def __init__(self, method, gss_host=None, override_gss_mech=False,
-                 public_key_auth=False, client_key=None, client_cert=None,
-                 override_pk_ok=False, password_auth=False, password=None,
-                 password_change=NotImplemented, password_change_prompt=None,
-                 kbdint_auth=False, kbdint_submethods=None,
-                 kbdint_challenge=None, kbdint_response=None, success=False):
+                 host_based_auth=False, client_host_key=None,
+                 client_host_cert=None, public_key_auth=False, client_key=None,
+                 client_cert=None, override_pk_ok=False, password_auth=False,
+                 password=None, password_change=NotImplemented,
+                 password_change_prompt=None, kbdint_auth=False,
+                 kbdint_submethods=None, kbdint_challenge=None,
+                 kbdint_response=None, success=False):
         super().__init__(_AuthServerStub(self, gss_host, override_gss_mech,
-                                         public_key_auth, override_pk_ok,
-                                         password_auth, password_change_prompt,
-                                         kbdint_auth, kbdint_challenge,
-                                         success), False)
+                                         host_based_auth, public_key_auth,
+                                         override_pk_ok, password_auth,
+                                         password_change_prompt, kbdint_auth,
+                                         kbdint_challenge, success), False)
 
         self._gss = GSSClient(gss_host, False) if gss_host else None
+
+        self._client_host_key = client_host_key
+        self._client_host_cert = client_host_cert
 
         self._client_key = client_key
         self._client_cert = client_cert
@@ -135,12 +154,12 @@ class _AuthClientStub(_AuthConnectionStub):
             self._auth = None
             self._auth_waiter = None
         else:
-            self._auth.process_packet(pkttype, packet)
+            self._auth.process_packet(pkttype, None, packet)
 
-    def get_auth_result(self):
+    async def get_auth_result(self):
         """Return the result of the authentication"""
 
-        return (yield from self._auth_waiter)
+        return await self._auth_waiter
 
     def try_next_auth(self):
         """Handle a request to move to another form of auth"""
@@ -150,8 +169,8 @@ class _AuthClientStub(_AuthConnectionStub):
         self._auth = None
         self._auth_waiter = None
 
-    @asyncio.coroutine
-    def send_userauth_request(self, method, *args, key=None):
+    async def send_userauth_request(self, method, *args, key=None,
+                                    trivial=True):
         """Send a user authentication request"""
 
         packet = self._get_userauth_request_packet(method, args)
@@ -159,7 +178,8 @@ class _AuthClientStub(_AuthConnectionStub):
         if key:
             packet += String(key.sign(String('') + packet))
 
-        self.send_packet(packet)
+        self.send_userauth_packet(MSG_USERAUTH_REQUEST, packet[1:],
+                                  trivial=trivial)
 
     def get_gss_context(self):
         """Return the GSS context associated with this connection"""
@@ -171,28 +191,33 @@ class _AuthClientStub(_AuthConnectionStub):
 
         return bool(self._gss)
 
-    @asyncio.coroutine
-    def public_key_auth_requested(self):
+    async def host_based_auth_requested(self):
+        """Return a host key pair, host, and user to authenticate with"""
+
+        if self._client_host_key:
+            keypair = asyncssh.load_keypairs((self._client_host_key,
+                                              self._client_host_cert))[0]
+        else:
+            keypair = None
+
+        return keypair, 'host', 'user'
+
+    async def public_key_auth_requested(self):
         """Return key to use for public key authentication"""
 
         if self._client_key:
-            return SSHLocalKeyPair(self._client_key, self._client_cert)
+            return asyncssh.load_keypairs((self._client_key,
+                                           self._client_cert))[0]
         else:
             return None
 
-    @asyncio.coroutine
-    def password_auth_requested(self):
+    async def password_auth_requested(self):
         """Return password to send for password authentication"""
-
-        # pylint: disable=no-self-use
 
         return self._password
 
-    @asyncio.coroutine
-    def password_change_requested(self, prompt, lang):
+    async def password_change_requested(self, _prompt, _lang):
         """Return old & new passwords for password change"""
-
-        # pylint: disable=unused-argument
 
         if self._password_change is True:
             return 'password', 'new_password'
@@ -209,17 +234,14 @@ class _AuthClientStub(_AuthConnectionStub):
 
         self._password_changed = False
 
-    @asyncio.coroutine
-    def kbdint_auth_requested(self):
+    async def kbdint_auth_requested(self):
         """Return submethods to send for keyboard-interactive authentication"""
 
         return self._kbdint_submethods
 
-    @asyncio.coroutine
-    def kbdint_challenge_received(self, name, instruction, lang, prompts):
+    async def kbdint_challenge_received(self, _name, _instruction,
+                                        _lang, _prompts):
         """Return responses to keyboard-interactive challenge"""
-
-        # pylint: disable=no-self-use,unused-argument
 
         if self._kbdint_response is True:
             return ('password',)
@@ -231,13 +253,16 @@ class _AuthServerStub(_AuthConnectionStub):
     """Stub class for server connection"""
 
     def __init__(self, peer=None, gss_host=None, override_gss_mech=False,
-                 public_key_auth=False, override_pk_ok=False,
-                 password_auth=False, password_change_prompt=None,
-                 kbdint_auth=False, kbdint_challenge=False, success=False):
+                 host_based_auth=False, public_key_auth=False,
+                 override_pk_ok=False, password_auth=False,
+                 password_change_prompt=None, kbdint_auth=False,
+                 kbdint_challenge=False, success=False):
         super().__init__(peer, True)
 
         self._gss = GSSServer(gss_host) if gss_host else None
         self._override_gss_mech = override_gss_mech
+
+        self._host_based_auth = host_based_auth
 
         self._public_key_auth = public_key_auth
         self._override_pk_ok = override_pk_ok
@@ -275,28 +300,28 @@ class _AuthServerStub(_AuthConnectionStub):
                 self._auth.cancel()
 
             if self._override_gss_mech:
-                self.send_packet(Byte(MSG_USERAUTH_GSSAPI_RESPONSE),
-                                 String('mismatch'))
+                self.send_userauth_packet(MSG_USERAUTH_GSSAPI_RESPONSE,
+                                          String('mismatch'))
             elif self._override_pk_ok:
-                self.send_packet(Byte(MSG_USERAUTH_PK_OK),
-                                 String(''), String(''))
+                self.send_userauth_packet(MSG_USERAUTH_PK_OK, String(''),
+                                          String(''))
             else:
                 self._auth = lookup_server_auth(self, 'user', method, packet)
         else:
-            self._auth.process_packet(pkttype, packet)
+            self._auth.process_packet(pkttype, None, packet)
 
     def send_userauth_failure(self, partial_success):
         """Send a user authentication failure response"""
 
         self._auth = None
-        self.send_packet(Byte(MSG_USERAUTH_FAILURE), NameList([]),
-                         Boolean(partial_success))
+        self.send_userauth_packet(MSG_USERAUTH_FAILURE, NameList([]),
+                                  Boolean(partial_success))
 
     def send_userauth_success(self):
         """Send a user authentication success response"""
 
         self._auth = None
-        self.send_packet(Byte(MSG_USERAUTH_SUCCESS))
+        self.send_userauth_packet(MSG_USERAUTH_SUCCESS)
 
     def get_gss_context(self):
         """Return the GSS context associated with this connection"""
@@ -306,8 +331,6 @@ class _AuthServerStub(_AuthConnectionStub):
     def gss_kex_auth_supported(self):
         """Return whether or not GSS key exchange authentication is supported"""
 
-        # pylint: disable=no-self-use
-
         return bool(self._gss)
 
     def gss_mic_auth_supported(self):
@@ -315,11 +338,20 @@ class _AuthServerStub(_AuthConnectionStub):
 
         return bool(self._gss)
 
-    @asyncio.coroutine
-    def validate_gss_principal(self, username, user_principal, host_principal):
+    async def validate_gss_principal(self, _username, _user_principal,
+                                     _host_principal):
         """Validate the GSS principal name for the specified user"""
 
-        # pylint: disable=unused-argument
+        return self._success
+
+    def host_based_auth_supported(self):
+        """Return whether or not host-based authentication is supported"""
+
+        return self._host_based_auth
+
+    async def validate_host_based_auth(self, _username, _key_data, _client_host,
+                                       _client_username, _msg, _signature):
+        """Validate host based authentication for the specified host and user"""
 
         return self._success
 
@@ -328,11 +360,8 @@ class _AuthServerStub(_AuthConnectionStub):
 
         return self._public_key_auth
 
-    @asyncio.coroutine
-    def validate_public_key(self, username, key_data, msg, signature):
+    async def validate_public_key(self, _username, _key_data, _msg, _signature):
         """Validate public key"""
-
-        # pylint: disable=unused-argument
 
         return self._success
 
@@ -341,22 +370,16 @@ class _AuthServerStub(_AuthConnectionStub):
 
         return self._password_auth
 
-    @asyncio.coroutine
-    def validate_password(self, username, password):
+    async def validate_password(self, _username, _password):
         """Validate password"""
 
-        # pylint: disable=unused-argument
-
         if self._password_change_prompt:
-            raise PasswordChangeRequired(self._password_change_prompt)
+            raise asyncssh.PasswordChangeRequired(self._password_change_prompt)
         else:
             return self._success
 
-    @asyncio.coroutine
-    def change_password(self, username, old_password, new_password):
+    async def change_password(self, _username, _old_password, _new_password):
         """Validate password"""
-
-        # pylint: disable=unused-argument
 
         return self._success
 
@@ -366,22 +389,16 @@ class _AuthServerStub(_AuthConnectionStub):
 
         return self._kbdint_auth
 
-    @asyncio.coroutine
-    def get_kbdint_challenge(self, username, lang, submethods):
+    async def get_kbdint_challenge(self, _username, _lang, _submethods):
         """Return a keyboard-interactive challenge"""
-
-        # pylint: disable=unused-argument
 
         if self._kbdint_challenge is True:
             return '', '', '', (('Password:', False),)
         else:
             return self._kbdint_challenge
 
-    @asyncio.coroutine
-    def validate_kbdint_response(self, username, responses):
+    async def validate_kbdint_response(self, _username, _responses):
         """Validate keyboard-interactive responses"""
-
-        # pylint: disable=unused-argument
 
         return self._success
 
@@ -390,21 +407,20 @@ class _AuthServerStub(_AuthConnectionStub):
 class _TestAuth(AsyncTestCase):
     """Unit tests for auth module"""
 
-    @asyncio.coroutine
-    def check_auth(self, method, expected_result, **kwargs):
+    async def check_auth(self, method, expected_result, **kwargs):
         """Unit test authentication"""
 
         client_conn, server_conn = _AuthClientStub.make_pair(method, **kwargs)
 
         try:
-            self.assertEqual((yield from client_conn.get_auth_result()),
+            self.assertEqual((await client_conn.get_auth_result()),
                              expected_result)
         finally:
             client_conn.close()
             server_conn.close()
 
     @asynctest
-    def test_client_auth_methods(self):
+    async def test_client_auth_methods(self):
         """Test client auth methods"""
 
         with self.subTest('Unknown client auth method'):
@@ -412,7 +428,7 @@ class _TestAuth(AsyncTestCase):
                 _AuthClientStub.make_pair(b'xxx')
 
     @asynctest
-    def test_server_auth_methods(self):
+    async def test_server_auth_methods(self):
         """Test server auth methods"""
 
         with self.subTest('No auth methods'):
@@ -423,17 +439,18 @@ class _TestAuth(AsyncTestCase):
         with self.subTest('All auth methods'):
             gss_host = '1' if gss_available else None
             server_conn = _AuthServerStub(gss_host=gss_host,
+                                          host_based_auth=True,
                                           public_key_auth=True,
                                           password_auth=True, kbdint_auth=True)
             if gss_available: # pragma: no branch
                 self.assertEqual(get_server_auth_methods(server_conn),
                                  [b'gssapi-keyex', b'gssapi-with-mic',
-                                  b'publickey', b'keyboard-interactive',
-                                  b'password'])
+                                  b'hostbased', b'publickey',
+                                  b'keyboard-interactive', b'password'])
             else: # pragma: no cover
                 self.assertEqual(get_server_auth_methods(server_conn),
-                                 [b'publickey', b'keyboard-interactive',
-                                  b'password'])
+                                 [b'hostbased', b'publickey',
+                                  b'keyboard-interactive', b'password'])
             server_conn.close()
 
         with self.subTest('Unknown auth method'):
@@ -443,194 +460,207 @@ class _TestAuth(AsyncTestCase):
             server_conn.close()
 
     @asynctest
-    def test_null_auth(self):
+    async def test_null_auth(self):
         """Unit test null authentication"""
 
-        yield from self.check_auth(b'none', (False, None))
+        await self.check_auth(b'none', (False, None))
 
     @unittest.skipUnless(gss_available, 'GSS not available')
     @asynctest
-    def test_gss_auth(self):
+    async def test_gss_auth(self):
         """Unit test GSS authentication"""
 
         with self.subTest('GSS with MIC auth not available'):
-            yield from self.check_auth(b'gssapi-with-mic', (False, None))
+            await self.check_auth(b'gssapi-with-mic', (False, None))
 
         for steps in range(4):
             with self.subTest('GSS with MIC auth available'):
-                yield from self.check_auth(b'gssapi-with-mic', (True, None),
-                                           gss_host=str(steps), success=True)
+                await self.check_auth(b'gssapi-with-mic', (True, None),
+                                      gss_host=str(steps), success=True)
 
             gss_host = str(steps) + ',step_error'
 
             with self.subTest('GSS with MIC error', steps=steps):
-                yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                           gss_host=gss_host)
+                await self.check_auth(b'gssapi-with-mic', (False, None),
+                                      gss_host=gss_host)
 
             with self.subTest('GSS with MIC error with token', steps=steps):
-                yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                           gss_host=gss_host + ',errtok')
+                await self.check_auth(b'gssapi-with-mic', (False, None),
+                                      gss_host=gss_host + ',errtok')
 
         with self.subTest('GSS with MIC without integrity'):
-            yield from self.check_auth(b'gssapi-with-mic', (True, None),
-                                       gss_host='1,no_client_integrity,' +
-                                       'no_server_integrity', success=True)
+            await self.check_auth(b'gssapi-with-mic', (True, None),
+                                  gss_host='1,no_client_integrity,' +
+                                  'no_server_integrity', success=True)
 
         with self.subTest('GSS client integrity mismatch'):
-            yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                       gss_host='1,no_client_integrity')
+            await self.check_auth(b'gssapi-with-mic', (False, None),
+                                  gss_host='1,no_client_integrity')
 
         with self.subTest('GSS server integrity mismatch'):
-            yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                       gss_host='1,no_server_integrity')
+            await self.check_auth(b'gssapi-with-mic', (False, None),
+                                  gss_host='1,no_server_integrity')
 
         with self.subTest('GSS mechanism unknown'):
-            yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                       gss_host='1,unknown_mech')
+            await self.check_auth(b'gssapi-with-mic', (False, None),
+                                  gss_host='1,unknown_mech')
 
         with self.subTest('GSS mechanism mismatch'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'gssapi-with-mic', (False, None),
-                                           gss_host='1', override_gss_mech=True)
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'gssapi-with-mic', (False, None),
+                                      gss_host='1', override_gss_mech=True)
 
     @asynctest
-    def test_publickey_auth(self):
+    async def test_hostbased_auth(self):
+        """Unit test host-based authentication"""
+
+        hkey = asyncssh.generate_private_key('ssh-rsa')
+        cert = hkey.generate_host_certificate(hkey, 'host')
+
+        with self.subTest('Host-based auth not available'):
+            await self.check_auth(b'hostbased', (False, None))
+
+        with self.subTest('Untrusted key'):
+            await self.check_auth(b'hostbased', (False, None),
+                                  client_host_key=hkey, host_based_auth=True)
+
+        with self.subTest('Trusted key'):
+            await self.check_auth(b'hostbased', (True, None),
+                                  client_host_key=hkey,
+                                  host_based_auth=True, success=True)
+
+        with self.subTest('Trusted certificate'):
+            await self.check_auth(b'hostbased', (True, None),
+                                  client_host_key=hkey, client_host_cert=cert,
+                                  host_based_auth=True, success=True)
+
+    @asynctest
+    async def test_publickey_auth(self):
         """Unit test public key authentication"""
 
         ckey = asyncssh.generate_private_key('ssh-rsa')
         cert = ckey.generate_user_certificate(ckey, 'name')
 
         with self.subTest('Public key auth not available'):
-            yield from self.check_auth(b'publickey', (False, None))
+            await self.check_auth(b'publickey', (False, None))
 
         with self.subTest('Untrusted key'):
-            yield from self.check_auth(b'publickey', (False, None),
-                                       client_key=ckey, public_key_auth=True)
+            await self.check_auth(b'publickey', (False, None), client_key=ckey,
+                                  public_key_auth=True)
 
         with self.subTest('Trusted key'):
-            yield from self.check_auth(b'publickey', (True, None),
-                                       client_key=ckey, public_key_auth=True,
-                                       success=True)
+            await self.check_auth(b'publickey', (True, None), client_key=ckey,
+                                  public_key_auth=True, success=True)
 
         with self.subTest('Trusted certificate'):
-            yield from self.check_auth(b'publickey', (True, None),
-                                       client_key=ckey, client_cert=cert,
-                                       public_key_auth=True, success=True)
+            await self.check_auth(b'publickey', (True, None), client_key=ckey,
+                                  client_cert=cert, public_key_auth=True,
+                                  success=True)
 
         with self.subTest('Invalid PK_OK message'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'publickey', (False, None),
-                                           client_key=ckey,
-                                           public_key_auth=True,
-                                           override_pk_ok=True)
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'publickey', (False, None),
+                                      client_key=ckey, public_key_auth=True,
+                                      override_pk_ok=True)
 
     @asynctest
-    def test_password_auth(self):
+    async def test_password_auth(self):
         """Unit test password authentication"""
 
         with self.subTest('Password auth not available'):
-            yield from self.check_auth(b'password', (False, None))
+            await self.check_auth(b'password', (False, None))
 
         with self.subTest('Invalid password'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'password', (False, None),
-                                           password_auth=True,
-                                           password=b'\xff')
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'password', (False, None),
+                                      password_auth=True, password=b'\xff')
 
         with self.subTest('Incorrect password'):
-            yield from self.check_auth(b'password', (False, None),
-                                       password_auth=True, password='password')
+            await self.check_auth(b'password', (False, None),
+                                  password_auth=True, password='password')
 
         with self.subTest('Correct password'):
-            yield from self.check_auth(b'password', (True, None),
-                                       password_auth=True, password='password',
-                                       success=True)
+            await self.check_auth(b'password', (True, None),
+                                  password_auth=True, password='password',
+                                  success=True)
 
         with self.subTest('Password change not available'):
-            yield from self.check_auth(b'password', (False, None),
-                                       password_auth=True, password='password',
-                                       password_change_prompt='change')
+            await self.check_auth(b'password', (False, None),
+                                  password_auth=True, password='password',
+                                  password_change_prompt='change')
 
         with self.subTest('Invalid password change prompt'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'password', (False, False),
-                                           password_auth=True,
-                                           password='password',
-                                           password_change=True,
-                                           password_change_prompt=b'\xff')
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'password', (False, False),
+                                      password_auth=True, password='password',
+                                      password_change=True,
+                                      password_change_prompt=b'\xff')
 
         with self.subTest('Password change failed'):
-            yield from self.check_auth(b'password', (False, False),
-                                       password_auth=True, password='password',
-                                       password_change=True,
-                                       password_change_prompt='change')
+            await self.check_auth(b'password', (False, False),
+                                  password_auth=True, password='password',
+                                  password_change=True,
+                                  password_change_prompt='change')
 
         with self.subTest('Password change succeeded'):
-            yield from self.check_auth(b'password', (True, True),
-                                       password_auth=True, password='password',
-                                       password_change=True,
-                                       password_change_prompt='change',
-                                       success=True)
+            await self.check_auth(b'password', (True, True),
+                                  password_auth=True, password='password',
+                                  password_change=True,
+                                  password_change_prompt='change', success=True)
 
     @asynctest
-    def test_kbdint_auth(self):
+    async def test_kbdint_auth(self):
         """Unit test keyboard-interactive authentication"""
 
         with self.subTest('Kbdint auth not available'):
-            yield from self.check_auth(b'keyboard-interactive', (False, None))
+            await self.check_auth(b'keyboard-interactive', (False, None))
 
         with self.subTest('No submethods'):
-            yield from self.check_auth(b'keyboard-interactive', (False, None),
-                                       kbdint_auth=True)
+            await self.check_auth(b'keyboard-interactive', (False, None),
+                                  kbdint_auth=True)
 
         with self.subTest('Invalid submethods'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'keyboard-interactive',
-                                           (False, None), kbdint_auth=True,
-                                           kbdint_submethods=b'\xff')
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'keyboard-interactive', (False, None),
+                                      kbdint_auth=True,
+                                      kbdint_submethods=b'\xff')
 
         with self.subTest('No challenge'):
-            yield from self.check_auth(b'keyboard-interactive', (False, None),
-                                       kbdint_auth=True, kbdint_submethods='')
+            await self.check_auth(b'keyboard-interactive', (False, None),
+                                  kbdint_auth=True, kbdint_submethods='')
 
         with self.subTest('Invalid challenge name'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'keyboard-interactive',
-                                           (False, None), kbdint_auth=True,
-                                           kbdint_submethods='',
-                                           kbdint_challenge=(b'\xff', '',
-                                                             '', ()))
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'keyboard-interactive', (False, None),
+                                      kbdint_auth=True, kbdint_submethods='',
+                                      kbdint_challenge=(b'\xff', '', '', ()))
 
         with self.subTest('Invalid challenge prompt'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'keyboard-interactive',
-                                           (False, None), kbdint_auth=True,
-                                           kbdint_submethods='',
-                                           kbdint_challenge=('', '', '',
-                                                             ((b'\xff',
-                                                               False),)))
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'keyboard-interactive', (False, None),
+                                      kbdint_auth=True, kbdint_submethods='',
+                                      kbdint_challenge=('', '', '',
+                                                        ((b'\xff', False),)))
 
         with self.subTest('No response'):
-            yield from self.check_auth(b'keyboard-interactive', (False, None),
-                                       kbdint_auth=True, kbdint_submethods='',
-                                       kbdint_challenge=True)
+            await self.check_auth(b'keyboard-interactive', (False, None),
+                                  kbdint_auth=True, kbdint_submethods='',
+                                  kbdint_challenge=True)
 
         with self.subTest('Invalid response'):
-            with self.assertRaises(DisconnectError):
-                yield from self.check_auth(b'keyboard-interactive',
-                                           (False, None), kbdint_auth=True,
-                                           kbdint_submethods='',
-                                           kbdint_challenge=True,
-                                           kbdint_response=(b'\xff',))
+            with self.assertRaises(asyncssh.ProtocolError):
+                await self.check_auth(b'keyboard-interactive', (False, None),
+                                      kbdint_auth=True, kbdint_submethods='',
+                                      kbdint_challenge=True,
+                                      kbdint_response=(b'\xff',))
 
         with self.subTest('Incorrect response'):
-            yield from self.check_auth(b'keyboard-interactive', (False, None),
-                                       kbdint_auth=True, kbdint_submethods='',
-                                       kbdint_challenge=True,
-                                       kbdint_response=True)
+            await self.check_auth(b'keyboard-interactive', (False, None),
+                                  kbdint_auth=True, kbdint_submethods='',
+                                  kbdint_challenge=True, kbdint_response=True)
 
         with self.subTest('Correct response'):
-            yield from self.check_auth(b'keyboard-interactive', (True, None),
-                                       kbdint_auth=True, kbdint_submethods='',
-                                       kbdint_challenge=True,
-                                       kbdint_response=True, success=True)
+            await self.check_auth(b'keyboard-interactive', (True, None),
+                                  kbdint_auth=True, kbdint_submethods='',
+                                  kbdint_challenge=True, kbdint_response=True,
+                                  success=True)

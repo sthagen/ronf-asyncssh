@@ -59,7 +59,7 @@ confidence=
 # --enable=similarities". If you want to run only the classes checker, but have
 # no Warning level messages displayed, use"--disable=all --enable=classes
 # --disable=W"
-disable=fixme,locally-enabled,locally-disabled,redefined-variable-type,too-many-boolean-expressions,too-many-arguments
+disable=fixme,locally-enabled,locally-disabled,redefined-variable-type,no-else-break,no-else-continue,no-else-raise,no-else-return,inconsistent-return-statements,invalid-overridden-method,unbalanced-tuple-unpacking,useless-return,consider-using-with
 
 
 [REPORTS]
@@ -95,7 +95,7 @@ evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / stateme
 bad-functions=map,filter
 
 # Good variable names which should always be accepted, separated by a comma
-good-names=a,av,b,c,ca,ch,cn,f,fs,g,h,i,ip,iv,j,k,l,n,r,s,sa,t,v,x,y,_
+good-names=A,B,D,I,a,av,b,c,ca,ch,cn,d,e,f,fd,fp,fs,g,h,i,id,ip,iv,j,k,l,n,p,q,r,rp,s,sa,t,v,x,y,_,_e,_f,_g,_k,_p,_q,_x
 
 # Bad variable names which should always be refused, separated by a comma
 bad-names=
@@ -205,6 +205,12 @@ indent-after-paren=4
 expected-line-ending-format=
 
 
+[REFACTORING]
+
+# Maximum number of nested blocks for function / method body
+max-nested-blocks=10
+
+
 [LOGGING]
 
 # Logging modules to check that the string format arguments are in logging
@@ -221,7 +227,7 @@ notes=FIXME,XXX,TODO
 [SIMILARITIES]
 
 # Minimum lines number of a similarity.
-min-similarity-lines=8
+min-similarity-lines=15
 
 # Ignore comments when computing similarities.
 ignore-comments=yes
@@ -263,7 +269,7 @@ ignored-modules=
 
 # List of classes names for which member attributes should not be checked
 # (useful for classes with attributes dynamically set).
-ignored-classes=SQLObject
+ignored-classes=Namespace
 
 # List of members which are set dynamically and missed by pylint inference
 # system, and so shouldn't trigger E0201 when accessed. Python regular
@@ -308,29 +314,32 @@ exclude-protected=_asdict,_fields,_replace,_source,_make
 [DESIGN]
 
 # Maximum number of arguments for function / method
-max-args=25
+max-args=100
 
 # Argument names that match this expression will be ignored. Default to name
 # with leading underscore
 ignored-argument-names=_.*
 
 # Maximum number of locals for function / method body
-max-locals=50
+max-locals=100
 
 # Maximum number of return / yield for function / method body
 max-returns=10
 
+# Maximum number of boolean expressions in a if statement
+max-bool-expr=20
+
 # Maximum number of branch for function / method body
-max-branches=50
+max-branches=100
 
 # Maximum number of statements in function / method body
-max-statements=100
+max-statements=150
 
 # Maximum number of parents for a class (see R0901).
 max-parents=10
 
 # Maximum number of attributes for a class (see R0902).
-max-attributes=100
+max-attributes=150
 
 # Minimum number of public methods for a class (see R0903).
 min-public-methods=0

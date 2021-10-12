@@ -1,16 +1,27 @@
-# Copyright (c) 2013-2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2018 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
 """SSH packet encoding and decoding functions"""
+
+from .misc import plural
+
 
 class PacketDecodeError(ValueError):
     """Packet decoding error"""
@@ -92,6 +103,11 @@ class SSHPacket:
 
         return self._packet[self._idx:]
 
+    def get_full_payload(self):
+        """Return the full packet"""
+
+        return self._packet
+
     def get_bytes(self, size):
         """Extract the requested number of bytes from the packet"""
 
@@ -139,27 +155,64 @@ class SSHPacket:
         return namelist.split(b',') if namelist else []
 
 
-class SSHPacketHandler:
-    """Parent class for SSH packet handlers
+class SSHPacketLogger:
+    """Parent class for SSH packet loggers"""
 
-       Classes wishing to decode SSH packets can inherit from this class,
-       defining the class variable packet_handlers as a dictionary which
-       maps SSH packet types to handler methods in the class and then
-       calling process_packet() to run the corresponding packet handler.
+    _handler_names = {}
 
-       The process_packet() function will return True if a handler was
-       found and False otherwise.
+    @property
+    def logger(self):
+        """The logger to use for packet logging"""
 
-    """
+        raise NotImplementedError
 
-    packet_handlers = {}
+    def _log_packet(self, msg, pkttype, pktid, packet, note):
+        """Log a sent/received packet"""
 
-    def process_packet(self, pkttype, packet):
-        """Call the packet handler defined for the specified packet.
-           Return True if a handler was found, or False otherwise."""
+        if isinstance(packet, SSHPacket):
+            packet = packet.get_full_payload()
 
-        if pkttype in self.packet_handlers:
-            self.packet_handlers[pkttype](self, pkttype, packet)
+        try:
+            name = '%s (%d)' % (self._handler_names[pkttype], pkttype)
+        except KeyError:
+            name = 'packet type %d' % pkttype
+
+        count = plural(len(packet), 'byte')
+
+        if note:
+            note = ' (%s)' % note
+
+        self.logger.packet(pktid, packet, '%s %s, %s%s',
+                           msg, name, count, note)
+
+    def log_sent_packet(self, pkttype, pktid, packet, note=''):
+        """Log a sent packet"""
+
+        self._log_packet('Sent', pkttype, pktid, packet, note)
+
+
+    def log_received_packet(self, pkttype, pktid, packet, note=''):
+        """Log a received packet"""
+
+        self._log_packet('Received', pkttype, pktid, packet, note)
+
+
+class SSHPacketHandler(SSHPacketLogger):
+    """Parent class for SSH packet handlers"""
+
+    _packet_handlers = {}
+
+    @property
+    def logger(self):
+        """The logger associated with this packet handler"""
+
+        raise NotImplementedError
+
+    def process_packet(self, pkttype, pktid, packet):
+        """Log and process a received packet"""
+
+        if pkttype in self._packet_handlers:
+            self._packet_handlers[pkttype](self, pkttype, pktid, packet)
             return True
         else:
             return False

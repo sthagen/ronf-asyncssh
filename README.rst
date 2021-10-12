@@ -2,7 +2,7 @@ AsyncSSH: Asynchronous SSH for Python
 =====================================
 
 AsyncSSH is a Python package which provides an asynchronous client and
-server implementation of the SSHv2 protocol on top of the Python 3.4+
+server implementation of the SSHv2 protocol on top of the Python 3.6+
 asyncio framework.
 
 .. code:: python
@@ -34,6 +34,7 @@ Features
   * OpenSSH-compatible direct and forwarded UNIX domain socket channels
   * Local and remote TCP/IP port forwarding
   * Local and remote UNIX domain socket forwarding
+  * Dynamic TCP/IP port forwarding via SOCKS
   * X11 forwarding support on both the client and the server
   * SFTP protocol version 3 with OpenSSH extensions
   * SCP protocol support, including third-party remote to remote copies
@@ -46,9 +47,13 @@ Features
 
   * Including OpenSSH variant to delay compression until after auth
 
-* Password, public key, and keyboard-interactive user authentication methods
+* User and host-based public key, password, and keyboard-interactive
+  authentication methods
+
 * Many types and formats of `public keys and certificates`__
 
+  * Including OpenSSH-compatible support for U2F and FIDO2 security keys
+  * Including PKCS#11 support for accessing PIV security tokens
   * Including support for X.509 certificates as defined in RFC 6187
 
 * Support for accessing keys managed by `ssh-agent`__ on UNIX systems
@@ -56,8 +61,10 @@ Features
   * Including agent forwarding support on both the client and the server
 
 * Support for accessing keys managed by PuTTY's Pageant agent on Windows
+* Support for accessing host keys via OpenSSH's ssh-keysign
 * OpenSSH-style `known_hosts file`__ support
 * OpenSSH-style `authorized_keys file`__ support
+* Partial support for `OpenSSH-style configuration files`__
 * Compatibility with OpenSSH "Encrypt then MAC" option for better security
 * Time and byte-count based session key renegotiation
 * Designed to be easy to extend to support new forms of key exchange,
@@ -71,31 +78,40 @@ __ http://asyncssh.readthedocs.io/en/stable/api.html#public-key-support
 __ http://asyncssh.readthedocs.io/en/stable/api.html#ssh-agent-support
 __ http://asyncssh.readthedocs.io/en/stable/api.html#known-hosts
 __ http://asyncssh.readthedocs.io/en/stable/api.html#authorized-keys
+__ http://asyncssh.readthedocs.io/en/stable/api.html#config-file-support
 
 License
 -------
 
 This package is released under the following terms:
 
-  Copyright (c) 2013-2017 by Ron Frederick <ronf@timeheart.net>.
-  All rights reserved.
+  Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 
   This program and the accompanying materials are made available under
-  the terms of the **Eclipse Public License v1.0** which accompanies
-  this distribution and is available at:
+  the terms of the Eclipse Public License v2.0 which accompanies this
+  distribution and is available at:
 
-    http://www.eclipse.org/legal/epl-v10.html
+    http://www.eclipse.org/legal/epl-2.0/
+
+  This program may also be made available under the following secondary
+  licenses when the conditions for such availability set forth in the
+  Eclipse Public License v2.0 are satisfied:
+
+     GNU General Public License, Version 2.0, or any later versions of
+     that license
+
+  SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 For more information about this license, please see the `Eclipse
-Public License FAQ <https://eclipse.org/legal/eplfaq.php>`_.
+Public License FAQ <https://www.eclipse.org/legal/epl-2.0/faq.php>`_.
 
 Prerequisites
 -------------
 
-To use ``asyncssh``, you need the following:
+To use AsyncSSH 2.0 or later, you need the following:
 
-* Python 3.4 or later
-* cryptography (PyCA) 1.1 or later
+* Python 3.6 or later
+* cryptography (PyCA) 2.8 or later
 
 Installation
 ------------
@@ -115,13 +131,20 @@ functionality:
 * Install bcrypt from https://pypi.python.org/pypi/bcrypt
   if you want support for OpenSSH private key encryption.
 
+* Install fido2 from https://pypi.org/project/fido2 if you want support
+  for key exchange and authentication with U2F/FIDO2 security keys.
+
+* Install python-pkcs11 from https://pypi.org/project/python-pkcs11 if
+  you want support for accessing PIV keys on PKCS#11 security tokens.
+
 * Install gssapi from https://pypi.python.org/pypi/gssapi if you
   want support for GSSAPI key exchange and authentication on UNIX.
 
 * Install libsodium from https://github.com/jedisct1/libsodium
-  and libnacl from https://pypi.python.org/pypi/libnacl if you want
-  support for curve25519 Diffie Hellman key exchange, ed25519 keys,
-  and the chacha20-poly1305 cipher.
+  and libnacl from https://pypi.python.org/pypi/libnacl if you have
+  a version of OpenSSL older than 1.1.1b installed and you want
+  support for Curve25519 key exchange, Ed25519 keys and certificates,
+  or the Chacha20-Poly1305 cipher.
 
 * Install libnettle from http://www.lysator.liu.se/~nisse/nettle/
   if you want support for UMAC cryptographic hashes.
@@ -129,31 +152,34 @@ functionality:
 * Install pyOpenSSL from https://pypi.python.org/pypi/pyOpenSSL
   if you want support for X.509 certificate authentication.
 
-* Install pypiwin32 from https://pypi.python.org/pypi/pypiwin32
-  if you want support for using the Pageant agent or support for
-  GSSAPI key exchange and authentication on Windows.
+* Install pywin32 from https://pypi.python.org/pypi/pywin32 if you
+  want support for using the Pageant agent or support for GSSAPI
+  key exchange and authentication on Windows.
 
 AsyncSSH defines the following optional PyPI extra packages to make it
 easy to install any or all of these dependencies:
 
   | bcrypt
+  | fido2
   | gssapi
   | libnacl
+  | pkcs11
   | pyOpenSSL
-  | pypiwin32
+  | pywin32
 
-For example, to install bcrypt, gssapi, libnacl, and pyOpenSSL on UNIX,
-you can run:
-
-  ::
-
-    pip install 'asyncssh[bcrypt,gssapi,libnacl,pyOpenSSL]'
-
-To install bcrypt, libnacl, pyOpenSSL, and pypiwin32 on Windows, you can run:
+For example, to install bcrypt, fido2, gssapi, libnacl, pkcs11, and
+pyOpenSSL on UNIX, you can run:
 
   ::
 
-    pip install 'asyncssh[bcrypt,libnacl,pyOpenSSL,pypiwin32]'
+    pip install 'asyncssh[bcrypt,fido2,gssapi,libnacl,pkcs11,pyOpenSSL]'
+
+To install bcrypt, fido2, libnacl, pkcs11, pyOpenSSL, and pywin32 on
+Windows, you can run:
+
+  ::
+
+    pip install 'asyncssh[bcrypt,fido2,libnacl,pkcs11,pyOpenSSL,pywin32]'
 
 Note that you will still need to manually install the libsodium library
 listed above for libnacl to work correctly and/or libnettle for UMAC

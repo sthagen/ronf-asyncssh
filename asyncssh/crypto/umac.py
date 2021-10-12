@@ -1,11 +1,19 @@
-# Copyright (c) 2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2016-2018 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -106,12 +114,10 @@ def __build_umac(size):
     globals()[_name] = _UMAC.new
 
 
-digest_size = None
+_nettle_lib = 'libnettle-6' if sys.platform == 'win32' \
+                            else ctypes.util.find_library('nettle')
 
-if sys.platform == 'win32': # pragma: no cover
-    _nettle = ctypes.cdll.LoadLibrary('libnettle-6')
-else:
-    _nettle = ctypes.cdll.LoadLibrary(ctypes.util.find_library('nettle'))
+_nettle = ctypes.cdll.LoadLibrary(_nettle_lib)
 
 for _size in (32, 64, 96, 128):
     __build_umac(_size)

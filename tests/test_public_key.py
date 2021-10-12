@@ -1,11 +1,19 @@
-# Copyright (c) 2014-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2014-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -22,14 +30,18 @@
 import binascii
 from datetime import datetime
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
+import unittest
 
 import asyncssh
 
 from asyncssh.asn1 import der_encode, BitString, ObjectIdentifier
 from asyncssh.asn1 import TaggedDERObject
+from asyncssh.crypto import chacha_available, ed25519_available, ed448_available
+from asyncssh.misc import write_file
 from asyncssh.packet import MPInt, String, UInt32
 from asyncssh.pbe import pkcs1_decrypt
 from asyncssh.public_key import CERT_TYPE_USER, CERT_TYPE_HOST, SSHKey
@@ -38,8 +50,10 @@ from asyncssh.public_key import decode_ssh_certificate
 from asyncssh.public_key import get_public_key_algs, get_certificate_algs
 from asyncssh.public_key import get_x509_certificate_algs
 from asyncssh.public_key import import_certificate_subject
+from asyncssh.public_key import load_identities
 
-from .util import bcrypt_available, libnacl_available, x509_available
+from .sk_stub import sk_available, stub_sk, unstub_sk
+from .util import bcrypt_available, x509_available
 from .util import make_certificate, run, TempDirTestCase
 
 
@@ -60,6 +74,14 @@ _openssl_available = _openssl_version != b''
 # The openssl "-v2prf" option is only available in OpenSSL 1.0.2 or later
 _openssl_supports_v2prf = _openssl_version >= b'OpenSSL 1.0.2'
 
+# Ed25519/Ed448 support via "pkey" is only available in OpenSSL 1.1.1 or later
+_openssl_supports_pkey = _openssl_version >= b'OpenSSL 1.1.1'
+
+if _openssl_version >= b'OpenSSL 3':
+    _openssl_legacy = '-provider default -provider legacy '
+else: # pragma: no cover
+    _openssl_legacy = ''
+
 try:
     if sys.platform != 'win32':
         _openssh_version = run('ssh -V')
@@ -76,36 +98,47 @@ _openssh_supports_gcm_chacha = _openssh_version >= b'OpenSSH_6.9'
 _openssh_supports_arcfour_blowfish_cast = (_openssh_available and
                                            _openssh_version < b'OpenSSH_7.6')
 
-# pylint: disable=bad-whitespace
-
-pkcs1_ciphers = (('aes128-cbc', '-aes128'),
-                 ('aes192-cbc', '-aes192'),
-                 ('aes256-cbc', '-aes256'),
-                 ('des-cbc',    '-des'),
-                 ('des3-cbc',   '-des3'))
+pkcs1_ciphers = (('aes128-cbc', '-aes128', False),
+                 ('aes192-cbc', '-aes192', False),
+                 ('aes256-cbc', '-aes256', False),
+                 ('des-cbc',    '-des',    True),
+                 ('des3-cbc',   '-des3',   False))
 
 pkcs8_ciphers = (
     ('aes128-cbc',   'sha224', 2, '-v2 aes-128-cbc '
-     '-v2prf hmacWithSHA224', _openssl_supports_v2prf),
+     '-v2prf hmacWithSHA224', _openssl_supports_v2prf, False),
     ('aes128-cbc',   'sha256', 2, '-v2 aes-128-cbc '
-     '-v2prf hmacWithSHA256', _openssl_supports_v2prf),
+     '-v2prf hmacWithSHA256', _openssl_supports_v2prf, False),
     ('aes128-cbc',   'sha384', 2, '-v2 aes-128-cbc '
-     '-v2prf hmacWithSHA384', _openssl_supports_v2prf),
+     '-v2prf hmacWithSHA384', _openssl_supports_v2prf, False),
     ('aes128-cbc',   'sha512', 2, '-v2 aes-128-cbc '
-     '-v2prf hmacWithSHA512', _openssl_supports_v2prf),
-    ('des-cbc',      'md5',    1, '-v1 PBE-MD5-DES',       _openssl_available),
-    ('des-cbc',      'sha1',   1, '-v1 PBE-SHA1-DES',      _openssl_available),
-    ('des2-cbc',     'sha1',   1, '-v1 PBE-SHA1-2DES',     _openssl_available),
-    ('des3-cbc',     'sha1',   1, '-v1 PBE-SHA1-3DES',     _openssl_available),
-    ('rc4-40',       'sha1',   1, '-v1 PBE-SHA1-RC4-40',   _openssl_available),
-    ('rc4-128',      'sha1',   1, '-v1 PBE-SHA1-RC4-128',  _openssl_available),
-    ('aes128-cbc',   'sha1',   2, '-v2 aes-128-cbc',       _openssl_available),
-    ('aes192-cbc',   'sha1',   2, '-v2 aes-192-cbc',       _openssl_available),
-    ('aes256-cbc',   'sha1',   2, '-v2 aes-256-cbc',       _openssl_available),
-    ('blowfish-cbc', 'sha1',   2, '-v2 bf-cbc',            _openssl_available),
-    ('cast128-cbc',  'sha1',   2, '-v2 cast-cbc',          _openssl_available),
-    ('des-cbc',      'sha1',   2, '-v2 des-cbc',           _openssl_available),
-    ('des3-cbc',     'sha1',   2, '-v2 des-ede3-cbc',      _openssl_available))
+     '-v2prf hmacWithSHA512', _openssl_supports_v2prf, False),
+    ('des-cbc',      'md5',    1, '-v1 PBE-MD5-DES',
+                              _openssl_available,      True),
+    ('des-cbc',      'sha1',   1, '-v1 PBE-SHA1-DES',
+                               _openssl_available,     True),
+    ('des2-cbc',     'sha1',   1, '-v1 PBE-SHA1-2DES',
+                              _openssl_available,      False),
+    ('des3-cbc',     'sha1',   1, '-v1 PBE-SHA1-3DES',
+                              _openssl_available,      False),
+    ('rc4-40',       'sha1',   1, '-v1 PBE-SHA1-RC4-40',
+                              _openssl_available,      True),
+    ('rc4-128',      'sha1',   1, '-v1 PBE-SHA1-RC4-128',
+                              _openssl_available,      True),
+    ('aes128-cbc',   'sha1',   2, '-v2 aes-128-cbc',
+                              _openssl_available,      False),
+    ('aes192-cbc',   'sha1',   2, '-v2 aes-192-cbc',
+                              _openssl_available,      False),
+    ('aes256-cbc',   'sha1',   2, '-v2 aes-256-cbc',
+                              _openssl_available,      False),
+    ('blowfish-cbc', 'sha1',   2, '-v2 bf-cbc',
+                              _openssl_available,      True),
+    ('cast128-cbc',  'sha1',   2, '-v2 cast-cbc',
+                              _openssl_available,      True),
+    ('des-cbc',      'sha1',   2, '-v2 des-cbc',
+                              _openssl_available,      True),
+    ('des3-cbc',     'sha1',   2, '-v2 des-ede3-cbc',
+                              _openssl_available,      False))
 
 openssh_ciphers = (
     ('aes128-gcm@openssh.com',  _openssh_supports_gcm_chacha),
@@ -124,10 +157,7 @@ openssh_ciphers = (
     ('3des-cbc',                _openssh_available)
 )
 
-# pylint: enable=bad-whitespace
-
-# Only test Chacha if libnacl is installed
-if libnacl_available: # pragma: no branch
+if chacha_available: # pragma: no branch
     openssh_ciphers += (('chacha20-poly1305@openssh.com',
                          _openssh_supports_gcm_chacha),)
 
@@ -158,6 +188,8 @@ class _TestPublicKey(TempDirTestCase):
     default_cert_version = ''
     x509_supported = False
     generate_args = ()
+    use_openssh = _openssh_available
+    use_openssl = _openssl_available
 
     def __init__(self, methodName='runTest'):
         super().__init__(methodName)
@@ -193,7 +225,7 @@ class _TestPublicKey(TempDirTestCase):
             cert.validate_chain([self.rootx509], [], [], 'any', None, None)
 
         chain = SSHX509CertificateChain.construct_from_certs([cert])
-        self.assertEqual(chain, decode_ssh_certificate(chain.data))
+        self.assertEqual(chain, decode_ssh_certificate(chain.public_data))
 
         self.assertIsNone(chain.validate_chain([self.rootx509], [], [], 'any',
                                                user_principal, None))
@@ -215,7 +247,7 @@ class _TestPublicKey(TempDirTestCase):
         newkey = asyncssh.read_private_key('new', passphrase)
         algorithm = newkey.get_algorithm()
         keydata = newkey.export_private_key()
-        pubdata = newkey.get_ssh_public_key()
+        pubdata = newkey.public_data
 
         self.assertEqual(newkey, self.privkey)
         self.assertEqual(hash(newkey), hash(self.privkey))
@@ -253,6 +285,15 @@ class _TestPublicKey(TempDirTestCase):
         keypair = asyncssh.load_keypairs([('new', None)], passphrase)[0]
         self.assertEqual(keypair.public_data, pubdata)
 
+        keypair = asyncssh.load_keypairs(Path('new'), passphrase)[0]
+        self.assertEqual(keypair.public_data, pubdata)
+
+        keypair = asyncssh.load_keypairs([Path('new')], passphrase)[0]
+        self.assertEqual(keypair.public_data, pubdata)
+
+        keypair = asyncssh.load_keypairs([(Path('new'), None)], passphrase)[0]
+        self.assertEqual(keypair.public_data, pubdata)
+
         keylist = asyncssh.load_keypairs([])
         self.assertEqual(keylist, [])
 
@@ -260,11 +301,28 @@ class _TestPublicKey(TempDirTestCase):
             with self.assertRaises((asyncssh.KeyEncryptionError,
                                     asyncssh.KeyImportError)):
                 asyncssh.load_keypairs('new', 'xxx')
+
+            if format_name == 'openssh':
+                identities = load_identities(['new'])
+                self.assertEqual(identities[0], pubdata)
+            else:
+                with self.assertRaises(asyncssh.KeyImportError):
+                    load_identities(['new'])
+
+                identities = load_identities(['new'], skip_private=True)
+                self.assertEqual(identities, [])
         else:
             newkey.write_private_key('list', format_name)
             newkey.append_private_key('list', format_name)
 
-            keylist = asyncssh.load_keypairs('list')
+            keylist = asyncssh.read_private_key_list('list')
+            self.assertEqual(keylist[0].public_data, pubdata)
+            self.assertEqual(keylist[1].public_data, pubdata)
+
+            newkey.write_private_key(Path('list'), format_name)
+            newkey.append_private_key(Path('list'), format_name)
+
+            keylist = asyncssh.load_keypairs(Path('list'))
             self.assertEqual(keylist[0].public_data, pubdata)
             self.assertEqual(keylist[1].public_data, pubdata)
 
@@ -275,14 +333,18 @@ class _TestPublicKey(TempDirTestCase):
             cert.write_certificate('new_cert')
 
             keypair = asyncssh.load_keypairs(('new', 'new_cert'), passphrase)[0]
-            self.assertEqual(keypair.public_data, chain.data)
+            self.assertEqual(keypair.public_data, chain.public_data)
+            self.assertIsNotNone(keypair.get_agent_private_key())
+
+            keypair = asyncssh.load_keypairs('new', passphrase, 'new_cert')[0]
+            self.assertEqual(keypair.public_data, chain.public_data)
             self.assertIsNotNone(keypair.get_agent_private_key())
 
             newkey.write_private_key('new_bundle', format_name, passphrase)
             cert.append_certificate('new_bundle', 'pem')
 
             keypair = asyncssh.load_keypairs('new_bundle', passphrase)[0]
-            self.assertEqual(keypair.public_data, chain.data)
+            self.assertEqual(keypair.public_data, chain.public_data)
 
             with self.assertRaises(OSError):
                 asyncssh.load_keypairs(('new', 'not_found'), passphrase)
@@ -291,29 +353,58 @@ class _TestPublicKey(TempDirTestCase):
         """Check for a public key match"""
 
         newkey = asyncssh.read_public_key('new')
-        pubdata = newkey.export_public_key()
+        pubkey = newkey.export_public_key()
+        pubdata = newkey.public_data
 
         self.assertEqual(newkey, self.pubkey)
         self.assertEqual(hash(newkey), hash(self.pubkey))
 
-        keypair = asyncssh.load_public_keys('new')[0]
-        self.assertEqual(keypair, newkey)
+        pubkey = asyncssh.load_public_keys('new')[0]
+        self.assertEqual(pubkey, newkey)
 
-        keypair = asyncssh.load_public_keys([newkey])[0]
-        self.assertEqual(keypair, newkey)
+        pubkey = asyncssh.load_public_keys([newkey])[0]
+        self.assertEqual(pubkey, newkey)
 
-        keypair = asyncssh.load_public_keys([pubdata])[0]
-        self.assertEqual(keypair, newkey)
+        pubkey = asyncssh.load_public_keys([pubkey])[0]
+        self.assertEqual(pubkey, newkey)
 
-        keypair = asyncssh.load_public_keys(['new'])[0]
-        self.assertEqual(keypair, newkey)
+        pubkey = asyncssh.load_public_keys(['new'])[0]
+        self.assertEqual(pubkey, newkey)
+
+        pubkey = asyncssh.load_public_keys(Path('new'))[0]
+        self.assertEqual(pubkey, newkey)
+
+        pubkey = asyncssh.load_public_keys([Path('new')])[0]
+        self.assertEqual(pubkey, newkey)
+
+        identity = load_identities(['new'])[0]
+        self.assertEqual(identity, pubdata)
 
         newkey.write_public_key('list', format_name)
         newkey.append_public_key('list', format_name)
 
-        keylist = asyncssh.load_public_keys('list')
+        keylist = asyncssh.read_public_key_list('list')
         self.assertEqual(keylist[0], newkey)
         self.assertEqual(keylist[1], newkey)
+
+        newkey.write_public_key(Path('list'), format_name)
+        newkey.append_public_key(Path('list'), format_name)
+
+        write_file('list', b'Extra text at end of key list\n', 'ab')
+
+        keylist = asyncssh.load_public_keys(Path('list'))
+        self.assertEqual(keylist[0], newkey)
+        self.assertEqual(keylist[1], newkey)
+
+        for hash_name in ('md5', 'sha1', 'sha256', 'sha384', 'sha512'):
+            fp = newkey.get_fingerprint(hash_name)
+
+            if self.use_openssh: # pragma: no branch
+                keygen_fp = run('ssh-keygen -l -E %s -f sshpub' % hash_name)
+                self.assertEqual(fp, keygen_fp.decode('ascii').split()[1])
+
+        with self.assertRaises(ValueError):
+            newkey.get_fingerprint('xxx')
 
     def check_certificate(self, cert_type, format_name):
         """Check for a certificate match"""
@@ -345,10 +436,34 @@ class _TestPublicKey(TempDirTestCase):
         certlist = asyncssh.load_certificates([certdata])
         self.assertEqual(certlist[0], cert)
 
+        certlist = asyncssh.load_certificates('cert')
+        self.assertEqual(certlist[0], cert)
+
+        certlist = asyncssh.load_certificates(Path('cert'))
+        self.assertEqual(certlist[0], cert)
+
+        certlist = asyncssh.load_certificates([Path('cert')])
+        self.assertEqual(certlist[0], cert)
+
+        certlist = asyncssh.load_certificates(certdata +
+                                              b'Extra  text in the middle\n' +
+                                              certdata)
+        self.assertEqual(certlist[0], cert)
+        self.assertEqual(certlist[1], cert)
+
         cert.write_certificate('list', format_name)
         cert.append_certificate('list', format_name)
 
         certlist = asyncssh.load_certificates('list')
+        self.assertEqual(certlist[0], cert)
+        self.assertEqual(certlist[1], cert)
+
+        cert.write_certificate(Path('list'), format_name)
+        cert.append_certificate(Path('list'), format_name)
+
+        write_file('list', b'Extra text at end of certificate list\n', 'ab')
+
+        certlist = asyncssh.load_certificates(Path('list'))
         self.assertEqual(certlist[0], cert)
         self.assertEqual(certlist[1], cert)
 
@@ -362,12 +477,28 @@ class _TestPublicKey(TempDirTestCase):
         self.assertEqual(certlist[1], cert)
         self.assertEqual(certlist[2], cert)
 
+        if format_name == 'openssh':
+            certlist = asyncssh.load_certificates(certdata[:-1])
+            self.assertEqual(certlist[0], cert)
+
+            certlist = asyncssh.load_certificates(certdata + certdata[:-1])
+            self.assertEqual(certlist[0], cert)
+            self.assertEqual(certlist[1], cert)
+
+            certlist = asyncssh.load_certificates(certdata[1:-1])
+            self.assertEqual(len(certlist), 0)
+
+            certlist = asyncssh.load_certificates(certdata[1:] + certdata[:-1])
+            self.assertEqual(len(certlist), 1)
+            self.assertEqual(certlist[0], cert)
+
+
     def import_pkcs1_private(self, fmt, cipher=None, args=None):
         """Check import of a PKCS#1 private key"""
 
         format_name = 'pkcs1-%s' % fmt
 
-        if _openssl_available: # pragma: no branch
+        if self.use_openssl: # pragma: no branch
             if cipher:
                 run('openssl %s %s -in priv -inform pem -out new -outform %s '
                     '-passout pass:passphrase' % (self.keyclass, args, fmt))
@@ -380,17 +511,18 @@ class _TestPublicKey(TempDirTestCase):
 
         self.check_private(format_name, select_passphrase(cipher))
 
-    def export_pkcs1_private(self, fmt, cipher=None):
+    def export_pkcs1_private(self, fmt, cipher=None, legacy_args=None):
         """Check export of a PKCS#1 private key"""
 
         format_name = 'pkcs1-%s' % fmt
         self.privkey.write_private_key('privout', format_name,
                                        select_passphrase(cipher), cipher)
 
-        if _openssl_available: # pragma: no branch
+        if self.use_openssl: # pragma: no branch
             if cipher:
-                run('openssl %s -in privout -inform %s -out new -outform pem '
-                    '-passin pass:passphrase' % (self.keyclass, fmt))
+                run('openssl %s %s -in privout -inform %s -out new '
+                    '-outform pem -passin pass:passphrase' %
+                    (self.keyclass, legacy_args, fmt))
             else:
                 run('openssl %s -in privout -inform %s -out new -outform pem' %
                     (self.keyclass, fmt))
@@ -406,7 +538,7 @@ class _TestPublicKey(TempDirTestCase):
 
         format_name = 'pkcs1-%s' % fmt
 
-        if (not _openssl_available or self.keyclass == 'dsa' or
+        if (not self.use_openssl or self.keyclass == 'dsa' or
                 _openssl_version < b'OpenSSL 1.0.0'): # pragma: no cover
             # OpenSSL no longer has support for PKCS#1 DSA, and PKCS#1
             # RSA is not supported before OpenSSL 1.0.0, so we only test
@@ -425,7 +557,7 @@ class _TestPublicKey(TempDirTestCase):
         format_name = 'pkcs1-%s' % fmt
         self.privkey.write_public_key('pubout', format_name)
 
-        if not _openssl_available or self.keyclass == 'dsa': # pragma: no cover
+        if not self.use_openssl or self.keyclass == 'dsa': # pragma: no cover
             # OpenSSL no longer has support for PKCS#1 DSA, so we can
             # only test against ourselves.
 
@@ -437,13 +569,13 @@ class _TestPublicKey(TempDirTestCase):
 
         self.check_public(format_name)
 
-    def import_pkcs8_private(self, fmt, use_openssl, cipher=None,
+    def import_pkcs8_private(self, fmt, openssl_ok=True, cipher=None,
                              hash_alg=None, pbe_version=None, args=None):
         """Check import of a PKCS#8 private key"""
 
         format_name = 'pkcs8-%s' % fmt
 
-        if use_openssl: # pragma: no branch
+        if self.use_openssl and openssl_ok: # pragma: no branch
             if cipher:
                 run('openssl pkcs8 -topk8 %s -in priv -inform pem -out new '
                     '-outform %s -passout pass:passphrase' % (args, fmt))
@@ -458,8 +590,9 @@ class _TestPublicKey(TempDirTestCase):
 
         self.check_private(format_name, select_passphrase(cipher, pbe_version))
 
-    def export_pkcs8_private(self, fmt, use_openssl, cipher=None,
-                             hash_alg=None, pbe_version=None):
+    def export_pkcs8_private(self, fmt, openssl_ok=True, cipher=None,
+                             hash_alg=None, pbe_version=None,
+                             legacy_args=None):
         """Check export of a PKCS#8 private key"""
 
         format_name = 'pkcs8-%s' % fmt
@@ -467,10 +600,11 @@ class _TestPublicKey(TempDirTestCase):
                                        select_passphrase(cipher, pbe_version),
                                        cipher, hash_alg, pbe_version)
 
-        if use_openssl: # pragma: no branch
+        if self.use_openssl and openssl_ok: # pragma: no branch
             if cipher:
-                run('openssl pkcs8 -in privout -inform %s -out new '
-                    '-outform pem -passin pass:passphrase' % fmt)
+                run('openssl pkcs8 %s -in privout -inform %s -out new '
+                    '-outform pem -passin pass:passphrase' %
+                    (legacy_args, fmt))
             else:
                 run('openssl pkcs8 -nocrypt -in privout -inform %s -out new '
                     '-outform pem' % fmt)
@@ -487,9 +621,13 @@ class _TestPublicKey(TempDirTestCase):
 
         format_name = 'pkcs8-%s' % fmt
 
-        if _openssl_available: # pragma: no branch
-            run('openssl %s -pubin -in pub -inform pem -out new -outform %s' %
-                (self.keyclass, fmt))
+        if self.use_openssl:
+            if _openssl_supports_pkey:
+                run('openssl pkey -pubin -in pub -inform pem -out new '
+                    '-outform %s' % fmt)
+            else: # pragma: no cover
+                run('openssl %s -pubin -in pub -inform pem -out new '
+                    '-outform %s' % (self.keyclass, fmt))
         else: # pragma: no cover
             self.pubkey.write_public_key('new', format_name)
 
@@ -501,39 +639,45 @@ class _TestPublicKey(TempDirTestCase):
         format_name = 'pkcs8-%s' % fmt
         self.privkey.write_public_key('pubout', format_name)
 
-        if _openssl_available: # pragma: no branch
-            run('openssl %s -pubin -in pubout -inform %s -out new '
-                '-outform pem' % (self.keyclass, fmt))
+        if self.use_openssl:
+            if _openssl_supports_pkey:
+                run('openssl pkey -pubin -in pubout -inform %s -out new '
+                    '-outform pem' % fmt)
+            else: # pragma: no cover
+                run('openssl %s -pubin -in pubout -inform %s -out new '
+                    '-outform pem' % (self.keyclass, fmt))
         else: # pragma: no cover
             pub = asyncssh.read_public_key('pubout')
             pub.write_public_key('new', format_name)
 
         self.check_public(format_name)
 
-    def import_openssh_private(self, use_openssh, cipher=None):
+    def import_openssh_private(self, openssh_ok=True, cipher=None):
         """Check import of an OpenSSH private key"""
 
-        if use_openssh: # pragma: no branch
+        if self.use_openssh and openssh_ok: # pragma: no branch
             shutil.copy('priv', 'new')
 
             if cipher:
-                run('ssh-keygen -p -a 128 -N passphrase -Z %s -o -f new' %
+                run('ssh-keygen -p -a 1 -N passphrase -Z %s -o -f new' %
                     cipher)
             else:
                 run('ssh-keygen -p -N "" -o -f new')
         else: # pragma: no cover
             self.privkey.write_private_key('new', 'openssh',
-                                           select_passphrase(cipher), cipher)
+                                           select_passphrase(cipher), cipher,
+                                           rounds=1, ignore_few_rounds=True)
 
         self.check_private('openssh', select_passphrase(cipher))
 
-    def export_openssh_private(self, use_openssh, cipher=None):
+    def export_openssh_private(self, openssh_ok=True, cipher=None):
         """Check export of an OpenSSH private key"""
 
         self.privkey.write_private_key('new', 'openssh',
-                                       select_passphrase(cipher), cipher)
+                                       select_passphrase(cipher), cipher,
+                                       rounds=1, ignore_few_rounds=True)
 
-        if use_openssh: # pragma: no branch
+        if self.use_openssh and openssh_ok: # pragma: no branch
             os.chmod('new', 0o600)
 
             if cipher:
@@ -558,7 +702,7 @@ class _TestPublicKey(TempDirTestCase):
 
         self.privkey.write_public_key('pubout', 'openssh')
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -e -f pubout -m rfc4716 > new')
         else: # pragma: no cover
             pub = asyncssh.read_public_key('pubout')
@@ -578,7 +722,7 @@ class _TestPublicKey(TempDirTestCase):
 
         cert.write_certificate('certout', 'openssh')
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -e -f certout -m rfc4716 > cert')
         else: # pragma: no cover
             cert = asyncssh.read_certificate('certout')
@@ -589,10 +733,15 @@ class _TestPublicKey(TempDirTestCase):
     def import_rfc4716_public(self):
         """Check import of an RFC4716 public key"""
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -e -f sshpub -m rfc4716 > new')
         else: # pragma: no cover
             self.pubkey.write_public_key('new', 'rfc4716')
+
+        self.check_public('rfc4716')
+
+        pubdata = self.pubkey.export_public_key('rfc4716')
+        write_file('new', pubdata.replace(b'\n', b'\nXXX:\n', 1))
 
         self.check_public('rfc4716')
 
@@ -601,7 +750,7 @@ class _TestPublicKey(TempDirTestCase):
 
         self.pubkey.write_public_key('pubout', 'rfc4716')
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -i -f pubout -m rfc4716 > new')
         else: # pragma: no cover
             pub = asyncssh.read_public_key('pubout')
@@ -612,7 +761,7 @@ class _TestPublicKey(TempDirTestCase):
     def import_rfc4716_certificate(self, cert_type, cert):
         """Check import of an RFC4716 certificate"""
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -e -f %s -m rfc4716 > cert' % cert)
         else: # pragma: no cover
             if cert_type == CERT_TYPE_USER:
@@ -629,7 +778,7 @@ class _TestPublicKey(TempDirTestCase):
 
         cert.write_certificate('certout', 'rfc4716')
 
-        if _openssh_available: # pragma: no branch
+        if self.use_openssh: # pragma: no branch
             run('ssh-keygen -i -f certout -m rfc4716 > cert')
         else: # pragma: no cover
             cert = asyncssh.read_certificate('certout')
@@ -640,11 +789,6 @@ class _TestPublicKey(TempDirTestCase):
 
     def import_der_x509_certificate(self, cert_type, cert):
         """Check import of a DER X.509 certificate"""
-
-        if cert_type == CERT_TYPE_USER:
-            cert = self.userx509
-        else:
-            cert = self.hostx509
 
         cert.write_certificate('cert', 'der')
         self.check_certificate(cert_type, 'der')
@@ -659,15 +803,25 @@ class _TestPublicKey(TempDirTestCase):
 
         self.check_certificate(cert_type, 'der')
 
-    def import_pem_x509_certificate(self, cert_type, cert):
+    def import_pem_x509_certificate(self, cert_type, cert, trusted=False):
         """Check import of a PEM X.509 certificate"""
 
-        if cert_type == CERT_TYPE_USER:
-            cert = self.userx509
-        else:
-            cert = self.hostx509
-
         cert.write_certificate('cert', 'pem')
+
+        if trusted:
+            with open('cert') as f:
+                lines = f.readlines()
+
+            lines[0] = lines[0][:11] + 'TRUSTED ' + lines[0][11:]
+
+            idx = lines[-2].find('=')
+            lines[-2] = lines[-2][:idx] + 'XXXX' + lines[-2][idx:]
+
+            lines[-1] = lines[-1][:9] + 'TRUSTED ' + lines[-1][9:]
+
+            with open('cert', 'w') as f:
+                f.writelines(lines)
+
         self.check_certificate(cert_type, 'pem')
 
     def export_pem_x509_certificate(self, cert_type, cert):
@@ -682,11 +836,6 @@ class _TestPublicKey(TempDirTestCase):
 
     def import_openssh_x509_certificate(self, cert_type, cert):
         """Check import of an OpenSSH X.509 certificate"""
-
-        if cert_type == CERT_TYPE_USER:
-            cert = self.userx509
-        else:
-            cert = self.hostx509
 
         cert.write_certificate('cert')
         self.check_certificate(cert_type, 'openssh')
@@ -728,7 +877,7 @@ class _TestPublicKey(TempDirTestCase):
                 with self.assertRaises(asyncssh.KeyEncryptionError):
                     self.privkey.export_private_key('pkcs1-pem', 'x', 'xxx')
 
-        if 'pkcs8' in self.private_formats:
+        if 'pkcs8' in self.private_formats: # pragma: no branch
             with self.subTest('Encode with unknown PKCS#8 cipher'):
                 with self.assertRaises(asyncssh.KeyEncryptionError):
                     self.privkey.export_private_key('pkcs8-pem', 'x', 'xxx')
@@ -766,6 +915,8 @@ class _TestPublicKey(TempDirTestCase):
                          TaggedDERObject(0, ObjectIdentifier('1.1'))))),
             ('Invalid PKCS#8',
              der_encode((0, (self.privkey.pkcs8_oid, ()), der_encode(None)))),
+            ('Unknown PKCS#8 algorithm',
+             der_encode((0, (ObjectIdentifier('1.1'), None), b''))),
             ('Invalid PKCS#8 ASN.1',
              der_encode((0, (self.privkey.pkcs8_oid, None), b''))),
             ('Invalid PKCS#8 params',
@@ -924,26 +1075,26 @@ class _TestPublicKey(TempDirTestCase):
             ('Invalid PEM PKCS#8 PBES2 PBKDF2 PRF',
              b'-----BEGIN ENCRYPTED PRIVATE KEY-----\n' +
              binascii.b2a_base64(der_encode(
-                 ((_ES2, ((_ES2_PBKDF2, (b'', 0, None)),
+                 ((_ES2, ((_ES2_PBKDF2, (b'', 1, None)),
                           (_ES2_AES128, None))), b''))) +
              b'-----END ENCRYPTED PRIVATE KEY-----'),
             ('Unknown PEM PKCS#8 PBES2 PBKDF2 PRF',
              b'-----BEGIN ENCRYPTED PRIVATE KEY-----\n' +
              binascii.b2a_base64(der_encode(
-                 ((_ES2, ((_ES2_PBKDF2, (b'', 0,
+                 ((_ES2, ((_ES2_PBKDF2, (b'', 1,
                                          (ObjectIdentifier('1.1'), None))),
                           (_ES2_AES128, None))), b''))) +
              b'-----END ENCRYPTED PRIVATE KEY-----'),
             ('Invalid PEM PKCS#8 PBES2 encryption parameters',
              b'-----BEGIN ENCRYPTED PRIVATE KEY-----\n' +
              binascii.b2a_base64(der_encode(
-                 ((_ES2, ((_ES2_PBKDF2, (b'', 0)),
+                 ((_ES2, ((_ES2_PBKDF2, (b'', 1)),
                           (_ES2_AES128, None))), b''))) +
              b'-----END ENCRYPTED PRIVATE KEY-----'),
             ('Invalid length PEM PKCS#8 PBES2 IV',
              b'-----BEGIN ENCRYPTED PRIVATE KEY-----\n' +
              binascii.b2a_base64(der_encode(
-                 ((_ES2, ((_ES2_PBKDF2, (b'', 0)),
+                 ((_ES2, ((_ES2_PBKDF2, (b'', 1)),
                           (_ES2_AES128, b''))), b''))) +
              b'-----END ENCRYPTED PRIVATE KEY-----'),
             ('Invalid OpenSSH cipher',
@@ -989,11 +1140,12 @@ class _TestPublicKey(TempDirTestCase):
 
         public_errors = [
             ('Non-ASCII', '\xff'),
-            ('Incomplete ASN.1', b''),
             ('Invalid ASN.1', b'\x30'),
             ('Invalid PKCS#1', der_encode(None)),
             ('Invalid PKCS#8', der_encode(((self.pubkey.pkcs8_oid, ()),
                                            BitString(der_encode(None))))),
+            ('Unknown PKCS#8 algorithm', der_encode(((ObjectIdentifier('1.1'),
+                                                      None), BitString(b'')))),
             ('Invalid PKCS#8 ASN.1', der_encode(((self.pubkey.pkcs8_oid,
                                                   None), BitString(b'')))),
             ('Invalid PEM header', b'-----BEGIN XXX-----\n'),
@@ -1009,6 +1161,10 @@ class _TestPublicKey(TempDirTestCase):
             ('Incomplete PEM ASN.1',
              b'-----BEGIN PUBLIC KEY-----\n'
              b'-----END PUBLIC KEY-----'),
+            ('Invalid PKCS#1 ASN.1',
+             b'-----BEGIN DSA PUBLIC KEY-----\n' +
+             binascii.b2a_base64(b'\x30') +
+             b'-----END PUBLIC KEY-----'),
             ('Invalid PKCS#1 key data',
              b'-----BEGIN DSA PUBLIC KEY-----\n' +
              binascii.b2a_base64(der_encode(None)) +
@@ -1023,6 +1179,20 @@ class _TestPublicKey(TempDirTestCase):
              b'ssh-dss ' + binascii.b2a_base64(String('xxx'))),
             ('Invalid OpenSSH body',
              b'ssh-dss ' + binascii.b2a_base64(String('ssh-dss'))),
+            ('Unknown format OpenSSH key',
+             b'-----BEGIN OPENSSH PRIVATE KEY-----\n' +
+             binascii.b2a_base64(b'XXX') +
+             b'-----END OPENSSH PRIVATE KEY-----'),
+            ('Incomplete OpenSSH key',
+             b'-----BEGIN OPENSSH PRIVATE KEY-----\n' +
+             binascii.b2a_base64(b'openssh-key-v1\0') +
+             b'-----END OPENSSH PRIVATE KEY-----'),
+            ('Invalid OpenSSH nkeys',
+             b'-----BEGIN OPENSSH PRIVATE KEY-----\n' +
+             binascii.b2a_base64(b''.join(
+                 (b'openssh-key-v1\0', String(''), String(''), String(''),
+                  UInt32(2), String(''), String('')))) +
+             b'-----END OPENSSH PRIVATE KEY-----'),
             ('Invalid RFC4716 header', b'---- XXX ----\n'),
             ('Missing RFC4716 footer', b'---- BEGIN SSH2 PUBLIC KEY ----\n'),
             ('Invalid RFC4716 header',
@@ -1124,7 +1294,7 @@ class _TestPublicKey(TempDirTestCase):
 
             with self.subTest('Sign with bad algorithm'):
                 with self.assertRaises(ValueError):
-                    self.privkey.sign(data, 'xxx')
+                    self.privkey.sign(data, b'xxx')
 
             with self.subTest('Verify with bad algorithm'):
                 self.assertFalse(self.pubkey.verify(
@@ -1134,118 +1304,234 @@ class _TestPublicKey(TempDirTestCase):
                 with self.assertRaises(ValueError):
                     self.pubkey.sign(data, self.pubkey.algorithm)
 
+    def check_set_certificate(self):
+        """Check setting certificate on existing keypair"""
+
+        keypair = asyncssh.load_keypairs([self.privkey])[0]
+        keypair.set_certificate(self.usercert)
+        self.assertEqual(keypair.public_data, self.usercert.public_data)
+
+        keypair = asyncssh.load_keypairs(self.privkey)[0]
+        keypair = asyncssh.load_keypairs((keypair, self.usercert))[0]
+        self.assertEqual(keypair.public_data, self.usercert.public_data)
+
+        key2 = asyncssh.generate_private_key('ssh-rsa')
+
+        with self.assertRaises(ValueError):
+            asyncssh.load_keypairs((key2, self.usercert))
+
     def check_comment(self):
         """Check getting and setting comments"""
 
         with self.subTest('Comment test'):
+            self.assertEqual(self.privkey.get_comment_bytes(), b'comment')
             self.assertEqual(self.privkey.get_comment(), 'comment')
-            self.assertEqual(self.pubkey.get_comment(), 'comment')
+            self.assertEqual(self.pubkey.get_comment_bytes(), b'pub_comment')
+            self.assertEqual(self.pubkey.get_comment(), 'pub_comment')
 
             key = asyncssh.import_private_key(
                 self.privkey.export_private_key('openssh'))
+            self.assertEqual(key.get_comment_bytes(), b'comment')
             self.assertEqual(key.get_comment(), 'comment')
 
             key.set_comment('new_comment')
+            self.assertEqual(key.get_comment_bytes(), b'new_comment')
             self.assertEqual(key.get_comment(), 'new_comment')
 
             key.set_comment(b'new_comment')
+            self.assertEqual(key.get_comment_bytes(), b'new_comment')
             self.assertEqual(key.get_comment(), 'new_comment')
+
+            key.set_comment(b'\xff')
+            self.assertEqual(key.get_comment_bytes(), b'\xff')
+            with self.assertRaises(UnicodeDecodeError):
+                key.get_comment()
+
+            cert = asyncssh.import_certificate(
+                self.usercert.export_certificate())
+
+            cert.set_comment(b'\xff')
+            self.assertEqual(cert.get_comment_bytes(), b'\xff')
+            with self.assertRaises(UnicodeDecodeError):
+                cert.get_comment()
+
+            if self.x509_supported:
+                cert = asyncssh.import_certificate(
+                    self.userx509.export_certificate())
+
+                cert.set_comment(b'\xff')
+                self.assertEqual(cert.get_comment_bytes(), b'\xff')
+                with self.assertRaises(UnicodeDecodeError):
+                    cert.get_comment()
 
             for fmt in ('openssh', 'rfc4716'):
                 key = asyncssh.import_public_key(
                     self.pubkey.export_public_key(fmt))
-                self.assertEqual(key.get_comment(), 'comment')
+                self.assertEqual(key.get_comment_bytes(), b'pub_comment')
+                self.assertEqual(key.get_comment(), 'pub_comment')
 
                 key = asyncssh.import_public_key(
                     self.pubca.export_public_key(fmt))
+                self.assertEqual(key.get_comment_bytes(), None)
                 self.assertEqual(key.get_comment(), None)
 
                 key.set_comment('new_comment')
+                self.assertEqual(key.get_comment_bytes(), b'new_comment')
                 self.assertEqual(key.get_comment(), 'new_comment')
 
                 key.set_comment(b'new_comment')
+                self.assertEqual(key.get_comment_bytes(), b'new_comment')
                 self.assertEqual(key.get_comment(), 'new_comment')
 
             for fmt in ('openssh', 'rfc4716'):
                 cert = asyncssh.import_certificate(
                     self.usercert.export_certificate(fmt))
-                self.assertEqual(cert.get_comment(), 'comment')
+                self.assertEqual(cert.get_comment_bytes(), b'user_comment')
+                self.assertEqual(cert.get_comment(), 'user_comment')
 
                 cert = self.privca.generate_user_certificate(
                     self.pubkey, 'name', comment='cert_comment')
+                self.assertEqual(cert.get_comment_bytes(), b'cert_comment')
                 self.assertEqual(cert.get_comment(), 'cert_comment')
 
                 cert = asyncssh.import_certificate(
                     self.hostcert.export_certificate(fmt))
-                self.assertEqual(cert.get_comment(), 'comment')
+                self.assertEqual(cert.get_comment_bytes(), b'host_comment')
+                self.assertEqual(cert.get_comment(), 'host_comment')
 
                 cert = self.privca.generate_host_certificate(
-                    self.pubkey, 'name', comment='cert_comment')
-                self.assertEqual(cert.get_comment(), 'cert_comment')
+                    self.pubkey, 'name', comment=b'\xff')
+                self.assertEqual(cert.get_comment_bytes(), b'\xff')
+                with self.assertRaises(UnicodeDecodeError):
+                    cert.get_comment()
 
                 cert.set_comment('new_comment')
+                self.assertEqual(cert.get_comment_bytes(), b'new_comment')
                 self.assertEqual(cert.get_comment(), 'new_comment')
 
                 cert.set_comment(b'new_comment')
+                self.assertEqual(cert.get_comment_bytes(), b'new_comment')
                 self.assertEqual(cert.get_comment(), 'new_comment')
 
             if self.x509_supported:
                 for fmt in ('openssh', 'der', 'pem'):
                     cert = asyncssh.import_certificate(
                         self.rootx509.export_certificate(fmt))
+                    self.assertEqual(cert.get_comment_bytes(), None)
                     self.assertEqual(cert.get_comment(), None)
 
                     cert = self.privca.generate_x509_ca_certificate(
-                        self.pubkey, 'OU=root', comment='cert_comment')
-                    self.assertEqual(cert.get_comment(), 'cert_comment')
+                        self.pubkey, 'OU=root', comment='ca_comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'ca_comment')
+                    self.assertEqual(cert.get_comment(), 'ca_comment')
 
                     cert = asyncssh.import_certificate(
                         self.userx509.export_certificate(fmt))
-                    self.assertEqual(cert.get_comment(), 'comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'user_comment')
+                    self.assertEqual(cert.get_comment(), 'user_comment')
 
                     cert = self.privca.generate_x509_user_certificate(
                         self.pubkey, 'OU=user', 'OU=root',
-                        comment='cert_comment')
-                    self.assertEqual(cert.get_comment(), 'cert_comment')
+                        comment='user_comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'user_comment')
+                    self.assertEqual(cert.get_comment(), 'user_comment')
 
                     cert = asyncssh.import_certificate(
                         self.hostx509.export_certificate(fmt))
-                    self.assertEqual(cert.get_comment(), 'comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'host_comment')
+                    self.assertEqual(cert.get_comment(), 'host_comment')
 
                     cert = self.privca.generate_x509_host_certificate(
                         self.pubkey, 'OU=host', 'OU=root',
-                        comment='cert_comment')
-                    self.assertEqual(cert.get_comment(), 'cert_comment')
+                        comment='host_comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'host_comment')
+                    self.assertEqual(cert.get_comment(), 'host_comment')
 
                     cert.set_comment('new_comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'new_comment')
                     self.assertEqual(cert.get_comment(), 'new_comment')
 
                     cert.set_comment(b'new_comment')
+                    self.assertEqual(cert.get_comment_bytes(), b'new_comment')
                     self.assertEqual(cert.get_comment(), 'new_comment')
 
-            with self.assertRaises(asyncssh.KeyImportError):
-                self.privkey.set_comment(b'\xff')
-
-            with self.assertRaises(asyncssh.KeyImportError):
-                self.pubkey.set_comment(b'\xff')
-
-            with self.assertRaises(asyncssh.KeyImportError):
-                self.usercert.set_comment(b'\xff')
-
-            if self.x509_supported:
-                with self.assertRaises(asyncssh.KeyImportError):
-                    self.userx509.set_comment(b'\xff')
-
             keypair = asyncssh.load_keypairs([self.privkey])[0]
+            self.assertEqual(keypair.get_comment_bytes(), b'comment')
+            self.assertEqual(keypair.get_comment(), 'comment')
 
             keypair.set_comment('new_comment')
+            self.assertEqual(keypair.get_comment_bytes(), b'new_comment')
             self.assertEqual(keypair.get_comment(), 'new_comment')
 
             keypair.set_comment(b'new_comment')
+            self.assertEqual(keypair.get_comment_bytes(), b'new_comment')
             self.assertEqual(keypair.get_comment(), 'new_comment')
 
-            with self.assertRaises(asyncssh.KeyImportError):
-                keypair.set_comment(b'\xff')
+            keypair.set_comment(b'\xff')
+            self.assertEqual(keypair.get_comment_bytes(), b'\xff')
+            with self.assertRaises(UnicodeDecodeError):
+                keypair.get_comment()
+
+            priv = asyncssh.read_private_key('priv')
+            priv.set_comment(None)
+
+            keypair = asyncssh.load_keypairs((priv, self.pubkey))[0]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            keypair = asyncssh.load_keypairs((priv, self.usercert))[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            keypair = asyncssh.load_keypairs(priv, None, self.usercert)[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            pubdata = self.pubkey.export_public_key()
+            keypair = asyncssh.load_keypairs((priv, pubdata))[0]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            certdata = self.usercert.export_certificate()
+            keypair = asyncssh.load_keypairs((priv, certdata))[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            keypair = asyncssh.load_keypairs(priv, None, certdata)[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            priv.write_private_key('key')
+
+            keypair = asyncssh.load_keypairs('key')[0]
+            self.assertEqual(keypair.get_comment(), 'key')
+
+            keypair = asyncssh.load_keypairs(('key', 'sshpub'))[0]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            keypair = asyncssh.load_keypairs(('key', 'usercert'))[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            keypair = asyncssh.load_keypairs('key', None, 'usercert')[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            self.pubkey.write_public_key('key.pub')
+
+            keypair = asyncssh.load_keypairs('key')[0]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            self.usercert.write_certificate('key-cert.pub')
+
+            keypair = asyncssh.load_keypairs('key')[0]
+            self.assertEqual(keypair.get_comment(), 'user_comment')
+
+            keypair = asyncssh.load_keypairs('key')[1]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            keypair = asyncssh.load_keypairs(('key', None))[0]
+            self.assertEqual(keypair.get_comment(), 'pub_comment')
+
+            key2 = asyncssh.generate_private_key('ssh-rsa')
+
+            with self.assertRaises(ValueError):
+                asyncssh.load_keypairs((key2, 'pub'))
+
+            for f in ('key', 'key.pub', 'key-cert.pub'):
+                os.remove(f)
 
     def check_pkcs1_private(self):
         """Check PKCS#1 private key format"""
@@ -1262,12 +1548,14 @@ class _TestPublicKey(TempDirTestCase):
         with self.subTest('Export PKCS#1 DER private'):
             self.export_pkcs1_private('der')
 
-        for cipher, args in pkcs1_ciphers:
+        for cipher, args, legacy in pkcs1_ciphers:
+            legacy_args = _openssl_legacy if legacy else ''
+
             with self.subTest('Import PKCS#1 PEM private (%s)' % cipher):
-                self.import_pkcs1_private('pem', cipher, args)
+                self.import_pkcs1_private('pem', cipher, legacy_args + args)
 
             with self.subTest('Export PKCS#1 PEM private (%s)' % cipher):
-                self.export_pkcs1_private('pem', cipher)
+                self.export_pkcs1_private('pem', cipher, legacy_args)
 
     def check_pkcs1_public(self):
         """Check PKCS#1 public key format"""
@@ -1288,37 +1576,42 @@ class _TestPublicKey(TempDirTestCase):
         """Check PKCS#8 private key format"""
 
         with self.subTest('Import PKCS#8 PEM private'):
-            self.import_pkcs8_private('pem', _openssl_available)
+            self.import_pkcs8_private('pem')
 
         with self.subTest('Export PKCS#8 PEM private'):
-            self.export_pkcs8_private('pem', _openssl_available)
+            self.export_pkcs8_private('pem')
 
         with self.subTest('Import PKCS#8 DER private'):
-            self.import_pkcs8_private('der', _openssl_available)
+            self.import_pkcs8_private('der')
 
         with self.subTest('Export PKCS#8 DER private'):
-            self.export_pkcs8_private('der', _openssl_available)
+            self.export_pkcs8_private('der')
 
-        for cipher, hash_alg, pbe_version, args, use_openssl in pkcs8_ciphers:
+        for cipher, hash_alg, pbe_version, args, \
+                openssl_ok, legacy in pkcs8_ciphers:
+            legacy_args = _openssl_legacy if legacy else ''
+
             with self.subTest('Import PKCS#8 PEM private (%s-%s-v%s)' %
                               (cipher, hash_alg, pbe_version)):
-                self.import_pkcs8_private('pem', use_openssl, cipher,
-                                          hash_alg, pbe_version, args)
+                self.import_pkcs8_private('pem', openssl_ok, cipher,
+                                          hash_alg, pbe_version,
+                                          legacy_args + args)
 
             with self.subTest('Export PKCS#8 PEM private (%s-%s-v%s)' %
                               (cipher, hash_alg, pbe_version)):
-                self.export_pkcs8_private('pem', use_openssl, cipher,
-                                          hash_alg, pbe_version)
+                self.export_pkcs8_private('pem', openssl_ok, cipher,
+                                          hash_alg, pbe_version, legacy_args)
 
             with self.subTest('Import PKCS#8 DER private (%s-%s-v%s)' %
                               (cipher, hash_alg, pbe_version)):
-                self.import_pkcs8_private('der', use_openssl, cipher,
-                                          hash_alg, pbe_version, args)
+                self.import_pkcs8_private('der', openssl_ok, cipher,
+                                          hash_alg, pbe_version,
+                                          legacy_args + args)
 
             with self.subTest('Export PKCS#8 DER private (%s-%s-v%s)' %
                               (cipher, hash_alg, pbe_version)):
-                self.export_pkcs8_private('der', use_openssl, cipher,
-                                          hash_alg, pbe_version)
+                self.export_pkcs8_private('der', openssl_ok, cipher,
+                                          hash_alg, pbe_version, legacy_args)
 
     def check_pkcs8_public(self):
         """Check PKCS#8 public key format"""
@@ -1339,18 +1632,18 @@ class _TestPublicKey(TempDirTestCase):
         """Check OpenSSH private key format"""
 
         with self.subTest('Import OpenSSH private'):
-            self.import_openssh_private(_openssh_available)
+            self.import_openssh_private()
 
         with self.subTest('Export OpenSSH private'):
-            self.export_openssh_private(_openssh_available)
+            self.export_openssh_private()
 
         if bcrypt_available: # pragma: no branch
-            for cipher, use_openssh in openssh_ciphers:
+            for cipher, openssh_ok in openssh_ciphers:
                 with self.subTest('Import OpenSSH private (%s)' % cipher):
-                    self.import_openssh_private(use_openssh, cipher)
+                    self.import_openssh_private(openssh_ok, cipher)
 
                 with self.subTest('Export OpenSSH private (%s)' % cipher):
-                    self.export_openssh_private(use_openssh, cipher)
+                    self.export_openssh_private(openssh_ok, cipher)
 
     def check_openssh_public(self):
         """Check OpenSSH public key format"""
@@ -1404,13 +1697,13 @@ class _TestPublicKey(TempDirTestCase):
         """Check DER X.509 certificate format"""
 
         with self.subTest('Import DER X.509 user certificate'):
-            self.import_der_x509_certificate(CERT_TYPE_USER, 'userx509')
+            self.import_der_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Export DER X.509 user certificate'):
             self.export_der_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Import DER X.509 host certificate'):
-            self.import_der_x509_certificate(CERT_TYPE_HOST, 'hostx509')
+            self.import_der_x509_certificate(CERT_TYPE_HOST, self.hostx509)
 
         with self.subTest('Export DER X.509 host certificate'):
             self.export_der_x509_certificate(CERT_TYPE_HOST, self.hostx509)
@@ -1419,28 +1712,36 @@ class _TestPublicKey(TempDirTestCase):
         """Check PEM X.509 certificate format"""
 
         with self.subTest('Import PEM X.509 user certificate'):
-            self.import_pem_x509_certificate(CERT_TYPE_USER, 'userx509')
+            self.import_pem_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Export PEM X.509 user certificate'):
             self.export_pem_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Import PEM X.509 host certificate'):
-            self.import_pem_x509_certificate(CERT_TYPE_HOST, 'hostx509')
+            self.import_pem_x509_certificate(CERT_TYPE_HOST, self.hostx509)
 
         with self.subTest('Export PEM X.509 host certificate'):
             self.export_pem_x509_certificate(CERT_TYPE_HOST, self.hostx509)
+
+        with self.subTest('Import PEM X.509 trusted user certificate'):
+            self.import_pem_x509_certificate(CERT_TYPE_USER, self.userx509,
+                                             trusted=True)
+
+        with self.subTest('Import PEM X.509 trusted host certificate'):
+            self.import_pem_x509_certificate(CERT_TYPE_HOST, self.hostx509,
+                                             trusted=True)
 
     def check_openssh_x509_certificate(self):
         """Check OpenSSH X.509 certificate format"""
 
         with self.subTest('Import OpenSSH X.509 user certificate'):
-            self.import_openssh_x509_certificate(CERT_TYPE_USER, 'userx509')
+            self.import_openssh_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Export OpenSSH X.509 user certificate'):
             self.export_openssh_x509_certificate(CERT_TYPE_USER, self.userx509)
 
         with self.subTest('Import OpenSSH X.509 host certificate'):
-            self.import_openssh_x509_certificate(CERT_TYPE_HOST, 'hostx509')
+            self.import_openssh_x509_certificate(CERT_TYPE_HOST, self.hostx509)
 
         with self.subTest('Export OpenSSH X.509 host certificate'):
             self.export_openssh_x509_certificate(CERT_TYPE_HOST, self.hostx509)
@@ -1453,7 +1754,7 @@ class _TestPublicKey(TempDirTestCase):
             source_address=['1.2.3.4'], permit_x11_forwarding=False,
             permit_agent_forwarding=False,
             permit_port_forwarding=False, permit_pty=False,
-            permit_user_rc=False)
+            permit_user_rc=False, touch_required=False)
 
         cert.write_certificate('cert')
         self.check_certificate(CERT_TYPE_USER, 'openssh')
@@ -1471,7 +1772,7 @@ class _TestPublicKey(TempDirTestCase):
 
             cert.write_certificate('cert')
             cert2 = asyncssh.read_certificate('cert')
-            self.assertEqual(cert2.data, cert.data)
+            self.assertEqual(cert2.public_data, cert.public_data)
 
     def check_certificate_errors(self, cert_type):
         """Check general and OpenSSH certificate error cases"""
@@ -1598,13 +1899,11 @@ class _TestPublicKey(TempDirTestCase):
 
         with self.subTest('Invalid DER format'):
             with self.assertRaises(asyncssh.KeyImportError):
-                asyncssh.import_certificate(b'\x30')
+                asyncssh.import_certificate(b'\x30\x00')
 
         with self.subTest('Invalid DER format in certificate list'):
             with self.assertRaises(asyncssh.KeyImportError):
-                with open('certlist', 'wb') as f:
-                    f.write(b'\x30')
-
+                write_file('certlist', b'\x30\x00')
                 asyncssh.read_certificate_list('certlist')
 
         with self.subTest('Invalid PEM format'):
@@ -1626,6 +1925,13 @@ class _TestPublicKey(TempDirTestCase):
                                             'X\n'
                                             '-----END CERTIFICATE-----\n')
 
+        with self.subTest('Invalid PEM trusted certificate'):
+            with self.assertRaises(asyncssh.KeyImportError):
+                asyncssh.import_certificate(
+                    '-----BEGIN TRUSTED CERTIFICATE-----\n'
+                    'MA==\n'
+                    '-----END TRUSTED CERTIFICATE-----\n')
+
         with self.subTest('Invalid PEM certificate data'):
             with self.assertRaises(asyncssh.KeyImportError):
                 asyncssh.import_certificate('-----BEGIN CERTIFICATE-----\n'
@@ -1633,25 +1939,25 @@ class _TestPublicKey(TempDirTestCase):
                                             '-----END CERTIFICATE-----\n')
 
         with self.subTest('Certificate not yet valid'):
-            with self.assertRaises(ValueError):
-                cert = self.privca.generate_x509_user_certificate(
-                    self.pubkey, 'OU=user', 'OU=root',
-                    valid_after=0xfffffffffffffffe)
+            cert = self.privca.generate_x509_user_certificate(
+                self.pubkey, 'OU=user', 'OU=root',
+                valid_after=0xfffffffffffffffe)
 
+            with self.assertRaises(ValueError):
                 self.validate_x509(cert)
 
         with self.subTest('Certificate expired'):
-            with self.assertRaises(ValueError):
-                cert = self.privca.generate_x509_user_certificate(
-                    self.pubkey, 'OU=user', 'OU=root', valid_before=1)
+            cert = self.privca.generate_x509_user_certificate(
+                self.pubkey, 'OU=user', 'OU=root', valid_before=1)
 
+            with self.assertRaises(ValueError):
                 self.validate_x509(cert)
 
         with self.subTest('Certificate principal mismatch'):
-            with self.assertRaises(ValueError):
-                cert = self.privca.generate_x509_user_certificate(
-                    self.pubkey, 'OU=user', 'OU=root', principals=['name'])
+            cert = self.privca.generate_x509_user_certificate(
+                self.pubkey, 'OU=user', 'OU=root', principals=['name'])
 
+            with self.assertRaises(ValueError):
                 self.validate_x509(cert, 'name2')
 
         for fmt in ('rfc4716', 'xxx'):
@@ -1692,6 +1998,8 @@ class _TestPublicKey(TempDirTestCase):
                 self.privkey.write_private_key('priv', self.base_format)
 
                 self.pubkey = self.privkey.convert_to_public()
+                self.pubkey.set_comment('pub_comment')
+
                 self.pubkey.write_public_key('pub', self.base_format)
                 self.pubkey.write_public_key('sshpub', 'openssh')
 
@@ -1702,11 +2010,11 @@ class _TestPublicKey(TempDirTestCase):
                 self.pubca.write_public_key('pubca', self.base_format)
 
                 self.usercert = self.privca.generate_user_certificate(
-                    self.pubkey, 'name')
+                    self.pubkey, 'name', comment='user_comment')
                 self.usercert.write_certificate('usercert')
 
                 self.hostcert = self.privca.generate_host_certificate(
-                    self.pubkey, 'name')
+                    self.pubkey, 'name', comment='host_comment')
                 self.hostcert.write_certificate('hostcert')
 
                 for f in ('priv', 'privca'):
@@ -1715,7 +2023,7 @@ class _TestPublicKey(TempDirTestCase):
                 self.assertEqual(self.privkey.get_algorithm(), alg_name)
 
                 self.assertEqual(self.usercert.get_algorithm(),
-                                 alg_name + '-cert-v01@openssh.com')
+                                 self.default_cert_version)
 
                 if self.x509_supported:
                     self.rootx509 = self.privca.generate_x509_ca_certificate(
@@ -1724,7 +2032,8 @@ class _TestPublicKey(TempDirTestCase):
                     self.rootx509.write_certificate('rootx509')
 
                     self.userx509 = self.privca.generate_x509_user_certificate(
-                        self.pubkey, 'OU=user', 'OU=root')
+                        self.pubkey, 'OU=user', 'OU=root',
+                        comment='user_comment')
 
                     self.assertEqual(self.userx509.get_algorithm(),
                                      'x509v3-' + alg_name)
@@ -1732,7 +2041,8 @@ class _TestPublicKey(TempDirTestCase):
                     self.userx509.write_certificate('userx509')
 
                     self.hostx509 = self.privca.generate_x509_host_certificate(
-                        self.pubkey, 'OU=host', 'OU=root')
+                        self.pubkey, 'OU=host', 'OU=root',
+                        comment='host_comment')
 
                     self.hostx509.write_certificate('hostx509')
 
@@ -1745,6 +2055,7 @@ class _TestPublicKey(TempDirTestCase):
                 self.check_decode_errors()
                 self.check_sshkey_base_errors()
                 self.check_sign_and_verify()
+                self.check_set_certificate()
                 self.check_comment()
 
                 if 'pkcs1' in self.private_formats:
@@ -1753,10 +2064,10 @@ class _TestPublicKey(TempDirTestCase):
                 if 'pkcs1' in self.public_formats:
                     self.check_pkcs1_public()
 
-                if 'pkcs8' in self.private_formats:
+                if 'pkcs8' in self.private_formats: # pragma: no branch
                     self.check_pkcs8_private()
 
-                if 'pkcs8' in self.public_formats:
+                if 'pkcs8' in self.public_formats: # pragma: no branch
                     self.check_pkcs8_public()
 
                 self.check_openssh_private()
@@ -1780,7 +2091,7 @@ class _TestPublicKey(TempDirTestCase):
 
 
 class TestDSA(_TestPublicKey):
-    """Test DSA public keys"""
+    """Test DSA keys"""
 
     keyclass = 'dsa'
     base_format = 'pkcs8-pem'
@@ -1792,7 +2103,7 @@ class TestDSA(_TestPublicKey):
 
 
 class TestRSA(_TestPublicKey):
-    """Test RSA public keys"""
+    """Test RSA keys"""
 
     keyclass = 'rsa'
     base_format = 'pkcs8-pem'
@@ -1806,8 +2117,8 @@ class TestRSA(_TestPublicKey):
                      ('ssh-rsa', {'exponent': 3}))
 
 
-class TestEC(_TestPublicKey):
-    """Test elliptic curve public keys"""
+class TestECDSA(_TestPublicKey):
+    """Test ECDSA keys"""
 
     keyclass = 'ec'
     base_format = 'pkcs8-pem'
@@ -1825,16 +2136,79 @@ class TestEC(_TestPublicKey):
         return self.privkey.algorithm.decode('ascii') + '-cert-v01@openssh.com'
 
 
-if libnacl_available: # pragma: no branch
-    class TestEd25519(_TestPublicKey):
-        """Test Ed25519 public keys"""
+@unittest.skipUnless(ed25519_available, 'ed25519 not available')
+class TestEd25519(_TestPublicKey):
+    """Test Ed25519 keys"""
 
-        keyclass = 'ed25519'
-        base_format = 'openssh'
-        private_formats = ('openssh')
-        public_formats = ('openssh', 'rfc4716')
-        default_cert_version = 'ssh-ed25519-cert-v01@openssh.com'
-        generate_args = (('ssh-ed25519', {}),)
+    keyclass = 'ed25519'
+    base_format = 'pkcs8-pem'
+    private_formats = ('pkcs8', 'openssh')
+    public_formats = ('pkcs8', 'openssh', 'rfc4716')
+    x509_supported = x509_available
+    default_cert_version = 'ssh-ed25519-cert-v01@openssh.com'
+    generate_args = (('ssh-ed25519', {}),)
+    use_openssh = False
+    use_openssl = _openssl_supports_pkey
+
+
+@unittest.skipUnless(ed448_available, 'ed448 not available')
+class TestEd448(_TestPublicKey):
+    """Test Ed448 keys"""
+
+    keyclass = 'ed448'
+    base_format = 'pkcs8-pem'
+    private_formats = ('pkcs8', 'openssh')
+    public_formats = ('pkcs8', 'openssh', 'rfc4716')
+    x509_supported = x509_available
+    default_cert_version = 'ssh-ed448-cert-v01@openssh.com'
+    generate_args = (('ssh-ed448', {}),)
+    use_openssh = False
+    use_openssl = _openssl_supports_pkey
+
+
+@unittest.skipUnless(sk_available, 'security key support not available')
+class TestSKECDSA(_TestPublicKey):
+    """Test U2F ECDSA keys"""
+
+    keyclass = 'sk-ecdsa'
+    base_format = 'openssh'
+    private_formats = ('openssh',)
+    public_formats = ('openssh',)
+    generate_args = (('sk-ecdsa-sha2-nistp256@openssh.com', {}),)
+    use_openssh = False
+
+    def setUp(self):
+        """Set up ECDSA security key test"""
+
+        super().setUp()
+        self.addCleanup(unstub_sk, *stub_sk([1]))
+
+    @property
+    def default_cert_version(self):
+        """Return default SSH certificate version"""
+
+        return self.privkey.algorithm.decode('ascii')[:-12] + \
+            '-cert-v01@openssh.com'
+
+
+@unittest.skipUnless(sk_available, 'security key support not available')
+@unittest.skipUnless(ed25519_available, 'ed25519 not available')
+class TestSKEd25519(_TestPublicKey):
+    """Test U2F Ed25519 keys"""
+
+    keyclass = 'sk-ed25519'
+    base_format = 'openssh'
+    private_formats = ('openssh',)
+    public_formats = ('openssh',)
+    default_cert_version = 'sk-ssh-ed25519-cert-v01@openssh.com'
+    generate_args = (('sk-ssh-ed25519@openssh.com', {}),)
+    use_openssh = False
+
+    def setUp(self):
+        """Set up Ed25519 security key test"""
+
+        super().setUp()
+        self.addCleanup(unstub_sk, *stub_sk([2]))
 
 
 del _TestPublicKey
@@ -1860,8 +2234,7 @@ class _TestPublicKeyTopLevel(TempDirTestCase):
         with self.assertRaises(asyncssh.KeyImportError):
             asyncssh.import_public_key(keydata)
 
-        with open('list', 'wb') as f:
-            f.write(keydata)
+        write_file('list', keydata)
 
         with self.assertRaises(asyncssh.KeyImportError):
             asyncssh.read_public_key_list('list')
@@ -1883,11 +2256,17 @@ class _TestPublicKeyTopLevel(TempDirTestCase):
                         '-param_enc explicit' % curve)
                     asyncssh.read_private_key('priv')
 
-            with self.subTest('Import EC key with unknown explicit parameters'):
-                run('openssl ecparam -out priv -noout -genkey -name secp112r1 '
-                    '-param_enc explicit')
-                with self.assertRaises(asyncssh.KeyImportError):
-                    asyncssh.read_private_key('priv')
+    @unittest.skipIf(b'secp224r1' not in run('openssl ecparam -list_curves'),
+                     "this openssl doesn't support secp224r1")
+    @unittest.skipIf(not _openssl_available, "openssl isn't available")
+    def test_ec_explicit_unknown(self):
+        """Import EC key with unknown explicit parameters"""
+
+        run('openssl ecparam -out priv -noout -genkey -name secp224r1 '
+            '-param_enc explicit')
+
+        with self.assertRaises(asyncssh.KeyImportError):
+            asyncssh.read_private_key('priv')
 
     def test_generate_errors(self):
         """Test errors in private key and certificate generation"""
@@ -1896,7 +2275,8 @@ class _TestPublicKeyTopLevel(TempDirTestCase):
                                  ('ssh-dss', {'xxx': 0}),
                                  ('ssh-rsa', {'xxx': 0}),
                                  ('ecdsa-sha2-nistp256', {'xxx': 0}),
-                                 ('ssh-ed25519', {'xxx': 0})):
+                                 ('ssh-ed25519', {'xxx': 0}),
+                                 ('ssh-ed448', {'xxx': 0})):
             with self.subTest(alg_name=alg_name, **kwargs):
                 with self.assertRaises(asyncssh.KeyGenerationError):
                     asyncssh.generate_private_key(alg_name, **kwargs)
@@ -1935,3 +2315,34 @@ class _TestPublicKeyTopLevel(TempDirTestCase):
 
         with self.assertRaises(asyncssh.KeyGenerationError):
             privca.generate_x509_user_certificate(pubkey, 'OU=user')
+
+    def test_rsa_encrypt_error(self):
+        """Test RSA encryption error"""
+
+        privkey = asyncssh.generate_private_key('ssh-rsa', 2048)
+        pubkey = privkey.convert_to_public()
+
+        self.assertIsNone(pubkey.encrypt(os.urandom(256), pubkey.algorithm))
+
+    def test_rsa_decrypt_error(self):
+        """Test RSA decryption error"""
+
+        privkey = asyncssh.generate_private_key('ssh-rsa', 2048)
+
+        self.assertIsNone(privkey.decrypt(b'', privkey.algorithm))
+
+    @unittest.skipUnless(x509_available, 'x509 not available')
+    def test_x509_certificate_hashes(self):
+        """Test X.509 certificate hash algorithms"""
+
+        privkey = asyncssh.generate_private_key('ssh-rsa')
+        pubkey = privkey.convert_to_public()
+
+        for hash_alg in ('sha1', 'sha256', 'sha512'):
+            cert = privkey.generate_x509_user_certificate(
+                pubkey, 'OU=user', hash_alg=hash_alg)
+
+            cert.write_certificate('cert', 'pem')
+
+            cert2 = asyncssh.read_certificate('cert')
+            self.assertEqual(str(cert2.subject), 'OU=user')

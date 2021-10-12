@@ -1,11 +1,19 @@
-# Copyright (c) 2015-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -32,10 +40,10 @@ except ImportError: # pragma: no cover
     bcrypt_available = False
 
 try:
-    import libnacl
-    libnacl_available = True
-except (ImportError, OSError, AttributeError): # pragma: no cover
-    libnacl_available = False
+    import uvloop
+    uvloop_available = True
+except ImportError: # pragma: no cover
+    uvloop_available = False
 
 try:
     from asyncssh.crypto import X509Name
@@ -45,36 +53,47 @@ except ImportError: # pragma: no cover
 
 # pylint: enable=unused-import
 
-from asyncssh.constants import DISC_CONNECTION_LOST
 from asyncssh.gss import gss_available
-from asyncssh.misc import DisconnectError, SignalReceived, create_task
-from asyncssh.packet import String, UInt32, UInt64
+from asyncssh.logging import logger
+from asyncssh.misc import ConnectionLost, SignalReceived
+from asyncssh.packet import Byte, String, UInt32, UInt64
 
 
-def asynctest(func):
+# pylint: disable=no-member
+
+if hasattr(asyncio, 'all_tasks'):
+    all_tasks = asyncio.all_tasks
+    current_task = asyncio.current_task
+else:
+    all_tasks = asyncio.Task.all_tasks
+    current_task = asyncio.Task.current_task
+
+# pylint: enable=no-member
+
+
+def asynctest(coro):
     """Decorator for async tests, for use with AsyncTestCase"""
 
-    @functools.wraps(func)
+    @functools.wraps(coro)
     def async_wrapper(self, *args, **kwargs):
-        """Run a function as a coroutine and wait for it to finish"""
+        """Run a coroutine and wait for it to finish"""
 
-        wrapped_func = asyncio.coroutine(func)(self, *args, **kwargs)
-        return self.loop.run_until_complete(wrapped_func)
+        return self.loop.run_until_complete(coro(self, *args, **kwargs))
 
     return async_wrapper
 
 
-def asynctest35(func):
-    """Decorator for Python 3.5 async tests, for use with AsyncTestCase"""
+def patch_getnameinfo(cls):
+    """Decorator for patching socket.getnameinfo"""
 
-    @functools.wraps(func)
-    def async_wrapper(self, *args, **kwargs):
-        """Run a function as a coroutine and wait for it to finish"""
+    def getnameinfo(sockaddr, flags):
+        """Mock reverse DNS lookup of client address"""
 
-        wrapped_func = func(self, *args, **kwargs)
-        return self.loop.run_until_complete(wrapped_func)
+        # pylint: disable=unused-argument
 
-    return async_wrapper
+        return ('localhost', sockaddr[1])
+
+    return patch('socket.getnameinfo', getnameinfo)(cls)
 
 
 def patch_gss(cls):
@@ -82,6 +101,8 @@ def patch_gss(cls):
 
     if not gss_available: # pragma: no cover
         return cls
+
+    # pylint: disable=import-outside-toplevel
 
     if sys.platform == 'win32': # pragma: no cover
         from .sspi_stub import SSPIAuth
@@ -100,13 +121,12 @@ def patch_gss(cls):
     return cls
 
 
-@asyncio.coroutine
-def echo(stdin, stdout, stderr=None):
+async def echo(stdin, stdout, stderr=None):
     """Echo data from stdin back to stdout and stderr (if open)"""
 
     try:
         while not stdin.at_eof():
-            data = yield from stdin.read(65536)
+            data = await stdin.read(65536)
 
             if data:
                 stdout.write(data)
@@ -114,15 +134,15 @@ def echo(stdin, stdout, stderr=None):
                 if stderr:
                     stderr.write(data)
 
-        yield from stdout.drain()
+        await stdout.drain()
 
         if stderr:
-            yield from stderr.drain()
+            await stderr.drain()
 
         stdout.write_eof()
     except SignalReceived as exc:
         if exc.signal == 'ABRT':
-            raise DisconnectError(DISC_CONNECTION_LOST, 'Abort')
+            raise ConnectionLost('Abort') from None
         else:
             stdin.channel.exit_with_signal(exc.signal)
     except OSError:
@@ -172,7 +192,8 @@ def run(cmd):
         return subprocess.check_output(cmd, shell=True,
                                        stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as exc: # pragma: no cover
-        print(exc.output.decode())
+        logger.error('Error running command: %s' % cmd)
+        logger.error(exc.output.decode())
         raise
 
 
@@ -190,13 +211,20 @@ class ConnectionStub:
             self._packet_queue = None
             self._queue_task = None
 
-    @asyncio.coroutine
-    def _run_task(self, coro):
+        self._logger = logger.get_child(context='conn=99')
+
+    @property
+    def logger(self):
+        """A logger associated with this connection"""
+
+        return self._logger
+
+    async def _run_task(self, coro):
         """Run an asynchronous task"""
 
         # pylint: disable=broad-except
         try:
-            yield from coro
+            await coro
         except Exception as exc:
             if self._peer: # pragma: no branch
                 self.queue_packet(exc)
@@ -206,7 +234,7 @@ class ConnectionStub:
     def create_task(self, coro):
         """Create an asynchronous task"""
 
-        return create_task(self._run_task(coro))
+        return asyncio.ensure_future(self._run_task(coro))
 
     def is_client(self):
         """Return if this is a client connection"""
@@ -223,12 +251,11 @@ class ConnectionStub:
 
         return self._peer
 
-    @asyncio.coroutine
-    def _process_packets(self):
+    async def _process_packets(self):
         """Process the queue of incoming packets"""
 
         while True:
-            data = yield from self._packet_queue.get()
+            data = await self._packet_queue.get()
 
             if data is None or isinstance(data, Exception):
                 self._queue_task = None
@@ -252,11 +279,13 @@ class ConnectionStub:
 
         self._packet_queue.put_nowait(data)
 
-    def send_packet(self, *args):
+    def send_packet(self, pkttype, *args, **kwargs):
         """Send a packet to this connection's peer"""
 
+        # pylint: disable=unused-argument
+
         if self._peer:
-            self._peer.queue_packet(b''.join(args))
+            self._peer.queue_packet(Byte(pkttype) + b''.join(args))
 
     def close(self):
         """Close the connection, stopping processing of incoming packets"""
@@ -270,10 +299,37 @@ class ConnectionStub:
             self._queue_task = None
 
 
-class TempDirTestCase(unittest.TestCase):
+if hasattr(unittest.TestCase, 'addClassCleanup'):
+    ClassCleanupTestCase = unittest.TestCase
+else: # pragma: no cover
+    class ClassCleanupTestCase(unittest.TestCase):
+        """Stripped down version of class cleanup for Python 3.7 & earlier"""
+
+        _class_cleanups = []
+
+        # pylint: disable=arguments-differ
+
+        @classmethod
+        def addClassCleanup(cls, function, *args, **kwargs):
+            """Add a cleanup to run after tearDownClass"""
+
+            cls._class_cleanups.append((function, args, kwargs))
+
+        @classmethod
+        def tearDownClass(cls):
+            """Run cleanups after tearDown"""
+
+            super().tearDownClass()
+
+            while cls._class_cleanups:
+                function, args, kwargs = cls._class_cleanups.pop()
+                function(*args, **kwargs)
+
+
+class TempDirTestCase(ClassCleanupTestCase):
     """Unit test class which operates in a temporary directory"""
 
-    tempdir = None
+    _tempdir = None
 
     @classmethod
     def setUpClass(cls):
@@ -301,11 +357,14 @@ class AsyncTestCase(TempDirTestCase):
 
         super().setUpClass()
 
-        cls.loop = asyncio.new_event_loop()
+        if uvloop_available and os.environ.get('USE_UVLOOP'): # pragma: no cover
+            cls.loop = uvloop.new_event_loop()
+        else:
+            cls.loop = asyncio.new_event_loop()
+
         asyncio.set_event_loop(cls.loop)
 
         try:
-            # pylint: disable=no-member
             cls.loop.run_until_complete(cls.asyncSetUpClass())
         except AttributeError:
             pass
@@ -315,7 +374,6 @@ class AsyncTestCase(TempDirTestCase):
         """Run async class teardown and close event loop"""
 
         try:
-            # pylint: disable=no-member
             cls.loop.run_until_complete(cls.asyncTearDownClass())
         except AttributeError:
             pass
@@ -328,7 +386,6 @@ class AsyncTestCase(TempDirTestCase):
         """Run async setup if any"""
 
         try:
-            # pylint: disable=no-member
             self.loop.run_until_complete(self.asyncSetUp())
         except AttributeError:
             pass
@@ -337,7 +394,6 @@ class AsyncTestCase(TempDirTestCase):
         """Run async teardown if any"""
 
         try:
-            # pylint: disable=no-member
             self.loop.run_until_complete(self.asyncTearDown())
         except AttributeError:
             pass

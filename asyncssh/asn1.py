@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -23,8 +31,6 @@
    it into the corresponding Python values.
 
 """
-
-# pylint: disable=bad-whitespace
 
 # ASN.1 object classes
 UNIVERSAL         = 0x00
@@ -44,8 +50,6 @@ UTF8_STRING       = 0x0c
 SEQUENCE          = 0x10
 SET               = 0x11
 IA5_STRING        = 0x16
-
-# pylint: enable=bad-whitespace
 
 _asn1_class = ('Universal', 'Application', 'Context-specific', 'Private')
 
@@ -207,10 +211,9 @@ class _Null:
     """A null value"""
 
     @staticmethod
-    def encode(value):
+    def encode(_value):
         """Encode a DER null value"""
 
-        # pylint: disable=unused-argument
         return b''
 
     @classmethod
@@ -334,9 +337,7 @@ class _Sequence:
 
         value = []
         while offset < length:
-            # pylint: disable=unpacking-non-sequence
             item, consumed = der_decode(content[offset:], partial_ok=True)
-            # pylint: enable=unpacking-non-sequence
             value.append(item)
             offset += consumed
 
@@ -365,9 +366,7 @@ class _Set:
 
         value = set()
         while offset < length:
-            # pylint: disable=unpacking-non-sequence
             item, consumed = der_decode(content[offset:], partial_ok=True)
-            # pylint: enable=unpacking-non-sequence
             value.add(item)
             offset += consumed
 
@@ -466,10 +465,10 @@ class IA5String:
         self.value = value
 
     def __str__(self):
-        return self.value
+        return '%s' % self.value
 
     def __repr__(self):
-        return "IA5String('%s')" % self.value
+        return 'IA5String(%r)' % self.value
 
     def __eq__(self, other):
         return isinstance(other, type(self)) and self.value == other.value
@@ -481,14 +480,12 @@ class IA5String:
         """Encode a DER IA5 string"""
 
         # ASN.1 defines this type as only containing ASCII characters, but
-        # some tools expecting ASN.1 allow IA5Strings to contain UTF-8
-        # characters, so we leave it up to the caller whether to resrict
-        # the data to plain ASCII or not.
+        # some tools expecting ASN.1 allow IA5Strings to contain other
+        # characters, so we leave it up to the caller to pass in a byte
+        # string which has already done the appropriate encoding of any
+        # non-ASCII characters.
 
-        if isinstance(self.value, str):
-            return self.value.encode('utf-8')
-        else:
-            return self.value
+        return self.value
 
     @classmethod
     def decode(cls, constructed, content):
@@ -497,7 +494,11 @@ class IA5String:
         if constructed:
             raise ASN1DecodeError('IA5 STRING should not be constructed')
 
-        return cls(content.decode('utf-8'))
+        # As noted in the encode method above, the decoded value for this
+        # type is a byte string, leaving the decoding of any non-ASCII
+        # characters up to the caller.
+
+        return cls(content)
 
 
 @DERTag(OBJECT_IDENTIFIER)
@@ -549,7 +550,8 @@ class ObjectIdentifier:
         try:
             components = [int(c) for c in self.value.split('.')]
         except ValueError:
-            raise ASN1EncodeError('Component values must be integers')
+            raise ASN1EncodeError('Component values must be '
+                                  'integers') from None
 
         if len(components) < 2:
             raise ASN1EncodeError('Object identifiers must have at least two '

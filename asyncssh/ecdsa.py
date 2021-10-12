@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -25,8 +33,10 @@ from .public_key import register_x509_certificate_alg
 # OID for EC prime fields
 PRIME_FIELD = ObjectIdentifier('1.2.840.10045.1.1')
 
-# Short variable names are used here, matching names in the spec
-# pylint: disable=invalid-name
+_hash_algs = {b'1.3.132.0.10': 'sha256',
+              b'nistp256':     'sha256',
+              b'nistp384':     'sha384',
+              b'nistp521':     'sha512'}
 
 _alg_oids = {}
 _alg_oid_map = {}
@@ -35,6 +45,7 @@ _alg_oid_map = {}
 class _ECKey(SSHKey):
     """Handler for elliptic curve public key encryption"""
 
+    default_hash_alg = 'sha256'
     pem_name = b'EC'
     pkcs8_oid = ObjectIdentifier('1.2.840.10045.2.1')
 
@@ -47,6 +58,7 @@ class _ECKey(SSHKey):
         self.all_sig_algorithms = set(self.sig_algorithms)
 
         self._alg_oid = _alg_oids[key.curve_id]
+        self._hash_alg = _hash_algs[key.curve_id]
 
     def __eq__(self, other):
         # This isn't protected access - both objects are _ECKey instances
@@ -70,7 +82,7 @@ class _ECKey(SSHKey):
             try:
                 curve_id = _alg_oid_map[alg_params]
             except KeyError:
-                raise KeyImportError('Unknown elliptic curve OID %s',
+                raise KeyImportError('Unknown elliptic curve OID %s' %
                                      alg_params) from None
         elif (isinstance(alg_params, tuple) and len(alg_params) >= 5 and
               alg_params[0] == 1 and isinstance(alg_params[1], tuple) and
@@ -103,20 +115,20 @@ class _ECKey(SSHKey):
         return cls(ECDSAPrivateKey.generate(algorithm[11:]))
 
     @classmethod
-    def make_private(cls, curve_id, private_key, public_key):
+    def make_private(cls, curve_id, private_value, public_value):
         """Construct an EC private key"""
 
-        if isinstance(private_key, bytes):
-            private_key = int.from_bytes(private_key, 'big')
+        if isinstance(private_value, bytes):
+            private_value = int.from_bytes(private_value, 'big')
 
-        return cls(ECDSAPrivateKey.construct(curve_id, public_key,
-                                             private_key))
+        return cls(ECDSAPrivateKey.construct(curve_id, public_value,
+                                             private_value))
 
     @classmethod
-    def make_public(cls, curve_id, public_key):
+    def make_public(cls, curve_id, public_value):
         """Construct an EC public key"""
 
-        return cls(ECDSAPublicKey.construct(curve_id, public_key))
+        return cls(ECDSAPublicKey.construct(curve_id, public_value))
 
     @classmethod
     def decode_pkcs1_private(cls, key_data):
@@ -143,10 +155,9 @@ class _ECKey(SSHKey):
             return None
 
     @classmethod
-    def decode_pkcs1_public(cls, key_data):
+    def decode_pkcs1_public(cls, _key_data):
         """Decode a PKCS#1 format EC public key"""
 
-        # pylint: disable=unused-argument
         raise KeyImportError('PKCS#1 not supported for EC public keys')
 
     @classmethod
@@ -261,43 +272,37 @@ class _ECKey(SSHKey):
 
         return MPInt(self._key.d)
 
-    def sign_der(self, data, sig_algorithm):
-        """Compute a DER-encoded signature of the specified data"""
+    def sign_ssh(self, data, sig_algorithm):
+        """Compute an SSH-encoded signature of the specified data"""
 
         # pylint: disable=unused-argument
 
         if not self._key.private_value:
             raise ValueError('Private key needed for signing')
 
-        return self._key.sign(data)
+        r, s = der_decode(self._key.sign(data, self._hash_alg))
+        return String(MPInt(r) + MPInt(s))
 
-    def verify_der(self, data, sig_algorithm, sig):
-        """Verify a DER-encoded signature of the specified data"""
+    def verify_ssh(self, data, sig_algorithm, packet):
+        """Verify an SSH-encoded signature of the specified data"""
 
         # pylint: disable=unused-argument
 
-        return self._key.verify(data, sig)
-
-    def sign_ssh(self, data, sig_algorithm):
-        """Compute an SSH-encoded signature of the specified data"""
-
-        r, s = der_decode(self.sign_der(data, sig_algorithm))
-        return MPInt(r) + MPInt(s)
-
-    def verify_ssh(self, data, sig_algorithm, sig):
-        """Verify an SSH-encoded signature of the specified data"""
+        sig = packet.get_string()
+        packet.check_end()
 
         packet = SSHPacket(sig)
         r = packet.get_mpint()
         s = packet.get_mpint()
         packet.check_end()
 
-        return self.verify_der(data, sig_algorithm, der_encode((r, s)))
+        return self._key.verify(data, der_encode((r, s)), self._hash_alg)
 
 
 for _curve_id, _oid in ((b'nistp521', '1.3.132.0.35'),
                         (b'nistp384', '1.3.132.0.34'),
-                        (b'nistp256', '1.2.840.10045.3.1.7')):
+                        (b'nistp256', '1.2.840.10045.3.1.7'),
+                        (b'1.3.132.0.10', '1.3.132.0.10')):
     _algorithm = b'ecdsa-sha2-' + _curve_id
     _cert_algorithm = _algorithm + b'-cert-v01@openssh.com'
     _x509_algorithm = b'x509v3-' + _algorithm
@@ -306,7 +311,7 @@ for _curve_id, _oid in ((b'nistp521', '1.3.132.0.35'),
     _alg_oids[_curve_id] = _oid
     _alg_oid_map[_oid] = _curve_id
 
-    register_public_key_alg(_algorithm, _ECKey, (_algorithm,))
+    register_public_key_alg(_algorithm, _ECKey, True, (_algorithm,))
     register_certificate_alg(1, _algorithm, _cert_algorithm,
-                             _ECKey, SSHOpenSSHCertificateV01)
-    register_x509_certificate_alg(_x509_algorithm)
+                             _ECKey, SSHOpenSSHCertificateV01, True)
+    register_x509_certificate_alg(_x509_algorithm, True)

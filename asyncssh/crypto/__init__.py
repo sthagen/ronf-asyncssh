@@ -1,38 +1,43 @@
-# Copyright (c) 2014-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2014-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
 """A shim for accessing cryptographic primitives needed by asyncssh"""
 
-from .cipher import register_cipher, lookup_cipher
+from .cipher import BasicCipher, GCMCipher, register_cipher, get_cipher_params
 
-from .ec import lookup_ec_curve_by_params
+from .dsa import DSAPrivateKey, DSAPublicKey
 
-# Import PyCA versions of DSA, ECDSA, RSA, and PBKDF2
-from .pyca.dsa import DSAPrivateKey, DSAPublicKey
-from .pyca.ec import ECDSAPrivateKey, ECDSAPublicKey, ECDH
-from .pyca.rsa import RSAPrivateKey, RSAPublicKey
-from .pyca.kdf import pbkdf2_hmac
+from .ec import ECDSAPrivateKey, ECDSAPublicKey, ECDH
 
-# Import pyca module to get ciphers defined there registered
-from . import pyca
+from .ed import ed25519_available, ed448_available
+from .ed import curve25519_available, curve448_available
+from .ed import EdDSAPrivateKey, EdDSAPublicKey, Curve25519DH, Curve448DH
+
+from .ec_params import lookup_ec_curve_by_params
+
+from .kdf import pbkdf2_hmac
+
+from .rsa import RSAPrivateKey, RSAPublicKey
 
 # Import chacha20-poly1305 cipher if available
-from . import chacha
-
-# Import curve25519 DH if available
-try:
-    from .curve25519 import Curve25519DH
-except ImportError: # pragma: no cover
-    pass
+from .chacha import ChachaCipher, chacha_available
 
 # Import umac cryptographic hash if available
 try:
@@ -42,7 +47,7 @@ except (ImportError, AttributeError, OSError): # pragma: no cover
 
 # Import X.509 certificate support if available
 try:
-    from .pyca.x509 import X509Name, X509NamePattern
-    from .pyca.x509 import generate_x509_certificate, import_x509_certificate
+    from .x509 import X509Name, X509NamePattern
+    from .x509 import generate_x509_certificate, import_x509_certificate
 except ImportError: # pragma: no cover
     pass

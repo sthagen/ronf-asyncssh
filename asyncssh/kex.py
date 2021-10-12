@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -19,9 +27,11 @@ from .packet import MPInt, SSHPacketHandler
 
 
 _kex_algs = []
+_default_kex_algs = []
 _kex_handlers = {}
 
 _gss_kex_algs = []
+_default_gss_kex_algs = []
 _gss_kex_handlers = {}
 
 
@@ -32,7 +42,20 @@ class Kex(SSHPacketHandler):
         self.algorithm = alg
 
         self._conn = conn
+        self._logger = conn.logger
         self._hash_alg = hash_alg
+
+
+    def send_packet(self, pkttype, *args):
+        """Send a kex packet"""
+
+        self._conn.send_packet(pkttype, *args, handler=self)
+
+    @property
+    def logger(self):
+        """A logger associated with this connection"""
+
+        return self._logger
 
     def compute_key(self, k, h, x, session_id, keylen):
         """Compute keys from output of key exchange"""
@@ -48,24 +71,39 @@ class Kex(SSHPacketHandler):
         return key[:keylen]
 
 
-def register_kex_alg(alg, handler, hash_alg, *args):
+def register_kex_alg(alg, handler, hash_alg, args, default):
     """Register a key exchange algorithm"""
 
     _kex_algs.append(alg)
+
+    if default:
+        _default_kex_algs.append(alg)
+
+
     _kex_handlers[alg] = (handler, hash_alg, args)
 
 
-def register_gss_kex_alg(alg, handler, hash_alg, *args):
+def register_gss_kex_alg(alg, handler, hash_alg, args, default):
     """Register a GSSAPI key exchange algorithm"""
 
     _gss_kex_algs.append(alg)
+
+    if default:
+        _default_gss_kex_algs.append(alg)
+
     _gss_kex_handlers[alg] = (handler, hash_alg, args)
 
 
 def get_kex_algs():
-    """Return a list of available key exchange algorithms"""
+    """Return supported key exchange algorithms"""
 
     return _gss_kex_algs + _kex_algs
+
+
+def get_default_kex_algs():
+    """Return default key exchange algorithms"""
+
+    return _default_gss_kex_algs + _default_kex_algs
 
 
 def expand_kex_algs(kex_algs, mechs, host_key_available):

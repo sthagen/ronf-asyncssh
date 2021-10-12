@@ -1,11 +1,19 @@
-# Copyright (c) 2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2016-2018 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -17,13 +25,10 @@ import unittest
 
 from asyncssh.packet import Byte, Boolean, UInt32, UInt64, String, MPInt
 from asyncssh.packet import NameList, PacketDecodeError, SSHPacket
-from asyncssh.packet import SSHPacketHandler
 
 
 class _TestPacket(unittest.TestCase):
     """Unit tests for SSH packet module"""
-
-    # pylint: disable=bad-whitespace
 
     tests = [
         (Byte, SSHPacket.get_byte, [
@@ -124,8 +129,6 @@ class _TestPacket(unittest.TestCase):
         (SSHPacket.get_string,                '000000011234')
     ]
 
-    # pylint: enable=bad-whitespace
-
     def test_packet(self):
         """Unit test SSH packet module"""
 
@@ -160,21 +163,3 @@ class _TestPacket(unittest.TestCase):
         """Unit test encoding of UTF-8 string"""
 
         self.assertEqual(String('\u2000'), b'\x00\x00\x00\x03\xe2\x80\x80')
-
-    def test_handler(self):
-        """Unit test SSH packet handler"""
-
-        class _TestPacketHandler(SSHPacketHandler):
-            """Class for unit testing SSHPacketHandler"""
-
-            def _handler1(self, pkttype, packet):
-                """Packet handler for unit testing"""
-
-            packet_handlers = {
-                1: _handler1
-            }
-
-        handler = _TestPacketHandler()
-        packet = SSHPacket(b'')
-        self.assertTrue(handler.process_packet(1, packet))
-        self.assertFalse(handler.process_packet(2, packet))

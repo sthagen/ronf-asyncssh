@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2018 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -16,12 +24,9 @@
 class SSHClient:
     """SSH client protocol handler
 
-       Applications should subclass this when implementing an SSH client.
-       The functions listed below should be overridden to define
-       application-specific behavior. In particular, the method
-       :meth:`auth_completed` should be defined to open the desired
-       SSH channels on this connection once authentication has been
-       completed.
+       Applications may subclass this when implementing an SSH client
+       to receive callbacks when certain events occur on the SSH
+       connection.
 
        For simple password or public key based authentication, nothing
        needs to be defined here if the password or client keys are passed
@@ -50,36 +55,32 @@ class SSHClient:
 
     # pylint: disable=no-self-use,unused-argument
 
-    def connection_made(self, connection):
+    def connection_made(self, conn):
         """Called when a connection is made
 
-           This method is called as soon as the TCP connection completes. The
-           connection parameter should be stored if needed for later use.
+           This method is called as soon as the TCP connection completes.
+           The `conn` parameter should be stored if needed for later use.
 
-           :param connection:
+           :param conn:
                The connection which was successfully opened
-           :type connection: :class:`SSHClientConnection`
+           :type conn: :class:`SSHClientConnection`
 
         """
-
-        pass # pragma: no cover
 
     def connection_lost(self, exc):
         """Called when a connection is lost or closed
 
            This method is called when a connection is closed. If the
-           connection is shut down cleanly, *exc* will be ``None``.
+           connection is shut down cleanly, *exc* will be `None`.
            Otherwise, it will be an exception explaining the reason for
            the disconnect.
 
            :param exc:
                The exception which caused the connection to close, or
-               ``None`` if the connection closed cleanly
+               `None` if the connection closed cleanly
            :type exc: :class:`Exception`
 
         """
-
-        pass # pragma: no cover
 
     def debug_msg_received(self, msg, lang, always_display):
         """A debug message was received on this connection
@@ -88,16 +89,98 @@ class SSHClient:
            a debug message. Applications should implement this method if
            they wish to process these debug messages.
 
-           :param str msg:
+           :param msg:
                The debug message sent
-           :param str lang:
+           :param lang:
                The language the message is in
-           :param bool always_display:
+           :param always_display:
                Whether or not to display the message
+           :type msg: `str`
+           :type lang: `str`
+           :type always_display: `bool`
 
         """
 
-        pass # pragma: no cover
+    def validate_host_public_key(self, host, addr, port, key):
+        """Return whether key is an authorized key for this host
+
+           Server host key validation can be supported by passing known
+           host keys in the `known_hosts` argument of
+           :func:`create_connection`. However, for more flexibility
+           in matching on the allowed set of keys, this method can be
+           implemented by the application to do the matching itself. It
+           should return `True` if the specified key is a valid host key
+           for the server being connected to.
+
+           By default, this method returns `False` for all host keys.
+
+               .. note:: This function only needs to report whether the
+                         public key provided is a valid key for this
+                         host. If it is, AsyncSSH will verify that the
+                         server possesses the corresponding private key
+                         before allowing the validation to succeed.
+
+           :param host:
+               The hostname of the target host
+           :param addr:
+               The IP address of the target host
+           :param port:
+               The port number on the target host
+           :param key:
+               The public key sent by the server
+           :type host: `str`
+           :type addr: `str`
+           :type port: `int`
+           :type key: :class:`SSHKey` *public key*
+
+           :returns: A `bool` indicating if the specified key is a valid
+                     key for the target host
+
+        """
+
+        return False # pragma: no cover
+
+    def validate_host_ca_key(self, host, addr, port, key):
+        """Return whether key is an authorized CA key for this host
+
+           Server host certificate validation can be supported by passing
+           known host CA keys in the `known_hosts` argument of
+           :func:`create_connection`. However, for more flexibility
+           in matching on the allowed set of keys, this method can be
+           implemented by the application to do the matching itself. It
+           should return `True` if the specified key is a valid certificate
+           authority key for the server being connected to.
+
+           By default, this method returns `False` for all CA keys.
+
+               .. note:: This function only needs to report whether the
+                         public key provided is a valid CA key for this
+                         host. If it is, AsyncSSH will verify that the
+                         certificate is valid, that the host is one of
+                         the valid principals for the certificate, and
+                         that the server possesses the private key
+                         corresponding to the public key in the certificate
+                         before allowing the validation to succeed.
+
+           :param host:
+               The hostname of the target host
+           :param addr:
+               The IP address of the target host
+           :param port:
+               The port number on the target host
+           :param key:
+               The public key which signed the certificate sent by the server
+           :type host: `str`
+           :type addr: `str`
+           :type port: `int`
+           :type key: :class:`SSHKey` *public key*
+
+           :returns: A `bool` indicating if the specified key is a valid
+                     CA key for the target host
+
+        """
+
+        return False # pragma: no cover
 
     def auth_banner_received(self, msg, lang):
         """An incoming authentication banner was received
@@ -106,14 +189,14 @@ class SSHClient:
            during authentication. Applications should implement this method
            if they wish to do something with the banner.
 
-           :param str msg:
+           :param msg:
                The message the server wanted to display
-           :param str lang:
+           :param lang:
                The language the message is in
+           :type msg: `str`
+           :type lang: `str`
 
         """
-
-        pass # pragma: no cover
 
     def auth_completed(self):
         """Authentication was completed successfully
@@ -123,10 +206,12 @@ class SSHClient:
            whatever client sessions and direct TCP/IP or UNIX domain
            connections are needed and/or set up listeners for incoming
            TCP/IP or UNIX domain connections coming from the server.
+           However, :func:`create_connection` now blocks until
+           authentication is complete, so any code which wishes to
+           use the SSH connection can simply follow that call and
+           doesn't need to be performed in a callback.
 
         """
-
-        pass # pragma: no cover
 
     def public_key_auth_requested(self):
         """Public key authentication has been requested
@@ -136,7 +221,7 @@ class SSHClient:
 
            This method may be called multiple times and can return a
            different key to try each time it is called. When there are
-           no keys left to try, it should return ``None`` to indicate
+           no keys left to try, it should return `None` to indicate
            that some other authentication method should be tried.
 
            If client keys were provided when the connection was opened,
@@ -147,7 +232,7 @@ class SSHClient:
            coroutine.
 
            :returns: A key as described in :ref:`SpecifyingPrivateKeys`
-                     or ``None`` to move on to another authentication
+                     or `None` to move on to another authentication
                      method
 
         """
@@ -163,7 +248,7 @@ class SSHClient:
            return a different password to try each time, but most
            servers have a limit on the number of attempts allowed.
            When there's no password left to try, this method should
-           return ``None`` to indicate that some other authentication
+           return `None` to indicate that some other authentication
            method should be tried.
 
            If a password was provided when the connection was opened,
@@ -174,7 +259,7 @@ class SSHClient:
            a coroutine.
 
            :returns: A string containing the password to authenticate
-                     with or ``None`` to move on to another authentication
+                     with or `None` to move on to another authentication
                      method
 
         """
@@ -188,21 +273,23 @@ class SSHClient:
            attempted and the user's password was expired on the
            server. To request a password change, this method should
            return a tuple or two strings containing the old and new
-           passwords. Otherwise, it should return ``NotImplemented``.
+           passwords. Otherwise, it should return `NotImplemented`.
 
            If blocking operations need to be performed to determine the
            passwords to authenticate with, this method may be defined
            as a coroutine.
 
-           By default, this method returns ``NotImplemented``.
+           By default, this method returns `NotImplemented`.
 
-           :param str prompt:
+           :param prompt:
                The prompt requesting that the user enter a new password
-           :param str lang:
+           :param lang:
                The language that the prompt is in
+           :type prompt: `str`
+           :type lang: `str`
 
            :returns: A tuple of two strings containing the old and new
-                     passwords or ``NotImplemented`` if password changes
+                     passwords or `NotImplemented` if password changes
                      aren't supported
 
         """
@@ -219,8 +306,6 @@ class SSHClient:
 
         """
 
-        pass # pragma: no cover
-
     def password_change_failed(self):
         """The requested password change has failed
 
@@ -232,8 +317,6 @@ class SSHClient:
 
         """
 
-        pass # pragma: no cover
-
     def kbdint_auth_requested(self):
         """Keyboard-interactive authentication has been requested
 
@@ -242,7 +325,7 @@ class SSHClient:
            keyboard-interactive authentication. An empty string can be
            returned to let the server pick the type of keyboard-interactive
            authentication to perform. If keyboard-interactive authentication
-           is not supported, ``None`` should be returned.
+           is not supported, `None` should be returned.
 
            By default, keyboard-interactive authentication is supported
            if a password was provided when the :class:`SSHClient` was
@@ -256,14 +339,14 @@ class SSHClient:
            coroutine.
 
            :returns: A string containing the submethods the server should
-                     use for authentication or ``None`` to move on to
+                     use for authentication or `None` to move on to
                      another authentication method
 
         """
 
         return NotImplemented # pragma: no cover
 
-    def kbdint_challenge_received(self, name, instruction, lang, prompts):
+    def kbdint_challenge_received(self, name, instructions, lang, prompts):
         """A keyboard-interactive auth challenge has been received
 
            This method is called when the server sends a keyboard-interactive
@@ -271,7 +354,7 @@ class SSHClient:
 
            The return value should be a list of strings of the same length
            as the number of prompts provided if the challenge can be
-           answered, or ``None`` to indicate that some other form of
+           answered, or `None` to indicate that some other form of
            authentication should be attempted.
 
            If blocking operations need to be performed to determine the
@@ -283,21 +366,24 @@ class SSHClient:
            :meth:`password_auth_requested` to provide the response.
            It will also ignore challenges with no prompts (generally used
            to provide instructions). Any other form of challenge will
-           cause this method to return ``None`` to move on to another
+           cause this method to return `None` to move on to another
            authentication method.
 
-           :param str name:
+           :param name:
                The name of the challenge
-           :param str instruction:
+           :param instructions:
                Instructions to the user about how to respond to the challenge
-           :param str lang:
+           :param lang:
                The language the challenge is in
            :param prompts:
                The challenges the user should respond to and whether or
                not the responses should be echoed when they are entered
-           :type prompts: list of tuples of str and bool
+           :type name: `str`
+           :type instructions: `str`
+           :type lang: `str`
+           :type prompts: `list` of tuples of `str` and `bool`
 
-           :returns: List of string responses to the challenge or ``None``
+           :returns: List of string responses to the challenge or `None`
                      to move on to another authentication method
 
         """

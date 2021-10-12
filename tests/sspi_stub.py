@@ -1,21 +1,33 @@
-# Copyright (c) 2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2017-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
+#     Georg Sauthoff - fix for "setup.py test" command on non-Windows
 
 """Stub SSPI module for unit tests"""
 
-from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
-from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
+import sys
 
 from .gss_stub import step
+
+if sys.platform == 'win32':
+    from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
+    from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
 
 
 class SSPIBuffer:
@@ -41,14 +53,14 @@ class SSPIContext:
 
         if attr == SECPKG_ATTR_NATIVE_NAMES:
             return ['user@TEST', 'host@TEST']
+        else:
+            return None
 
 
 class SSPIAuth:
     """Stub class for SSPI authentication"""
 
-    def __init__(self, package=None, spn=None, targetspn=None, scflags=None):
-        # pylint: disable=unused-argument
-
+    def __init__(self, _package=None, spn=None, targetspn=None, scflags=None):
         host = spn or targetspn
 
         if 'init_error' in host:

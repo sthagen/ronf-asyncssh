@@ -1,70 +1,198 @@
-# Copyright (c) 2013-2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
-"""Elliptic curve public key utility functions"""
+"""A shim around PyCA for elliptic curve keys and key exchange"""
 
-_curve_param_map = {}
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends.openssl import backend
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import PublicFormat
+
+from .misc import PyCAKey, hashes
+
 
 # Short variable names are used here, matching names in the spec
 # pylint: disable=invalid-name
 
-
-def register_prime_curve(curve_id, p, a, b, point, n):
-    """Register an elliptic curve prime domain
-
-       This function registers an elliptic curve prime domain by
-       specifying the SSH identifier for the curve and the set of
-       parameters describing the curve, generator point, and order.
-       This allows EC keys encoded with explicit parameters to be
-       mapped back into their SSH curve IDs.
-
-    """
-
-    _curve_param_map[p, a % p, b % p, point, n] = curve_id
+_curves = {b'1.3.132.0.10': ec.SECP256K1,
+           b'nistp256':     ec.SECP256R1,
+           b'nistp384':     ec.SECP384R1,
+           b'nistp521':     ec.SECP521R1}
 
 
-def lookup_ec_curve_by_params(p, a, b, point, n):
-    """Look up an elliptic curve by its parameters
+class _ECKey(PyCAKey):
+    """Base class for shim around PyCA for EC keys"""
 
-       This function looks up an elliptic curve by its parameters
-       and returns the curve's name.
+    def __init__(self, pyca_key, curve_id, pub, point, priv=None):
+        super().__init__(pyca_key)
 
-    """
+        self._curve_id = curve_id
+        self._pub = pub
+        self._point = point
+        self._priv = priv
 
-    try:
-        return _curve_param_map[p, a % p, b % p, point, n]
-    except (KeyError, ValueError):
-        raise ValueError('Unknown elliptic curve parameters')
+    @classmethod
+    def lookup_curve(cls, curve_id):
+        """Look up curve and hash algorithm"""
+
+        try:
+            return _curves[curve_id]
+        except KeyError: # pragma: no cover, other curves not registered
+            raise ValueError('Unknown EC curve %s' %
+                             curve_id.decode()) from None
+
+    @property
+    def curve_id(self):
+        """Return the EC curve name"""
+
+        return self._curve_id
+
+    @property
+    def x(self):
+        """Return the EC public x coordinate"""
+
+        return self._pub.x
+
+    @property
+    def y(self):
+        """Return the EC public y coordinate"""
+
+        return self._pub.y
+
+    @property
+    def d(self):
+        """Return the EC private value as an integer"""
+
+        return self._priv.private_value if self._priv else None
+
+    @property
+    def public_value(self):
+        """Return the EC public point value encoded as a byte string"""
+
+        return self._point
+
+    @property
+    def private_value(self):
+        """Return the EC private value encoded as a byte string"""
+
+        if self._priv:
+            keylen = (self._pub.curve.key_size + 7) // 8
+            return self._priv.private_value.to_bytes(keylen, 'big')
+        else:
+            return None
 
 
-# pylint: disable=line-too-long
+class ECDSAPrivateKey(_ECKey):
+    """A shim around PyCA for ECDSA private keys"""
 
-register_prime_curve(b'nistp521',
-                     6864797660130609714981900799081393217269435300143305409394463459185543183397656052122559640661454554977296311391480858037121987999716643812574028291115057151,
-                     -3,
-                     1093849038073734274511112390766805569936207598951683748994586394495953116150735016013708737573759623248592132296706313309438452531591012912142327488478985984,
-                     b'\x04\x00\xc6\x85\x8e\x06\xb7\x04\x04\xe9\xcd\x9e>\xcbf#\x95\xb4B\x9cd\x819\x05?\xb5!\xf8(\xaf`kM=\xba\xa1K^w\xef\xe7Y(\xfe\x1d\xc1\'\xa2\xff\xa8\xde3H\xb3\xc1\x85jB\x9b\xf9~~1\xc2\xe5\xbdf\x01\x189)jx\x9a;\xc0\x04\\\x8a_\xb4,}\x1b\xd9\x98\xf5DIW\x9bDh\x17\xaf\xbd\x17\'>f,\x97\xeer\x99^\xf4&@\xc5P\xb9\x01?\xad\x07a5<p\x86\xa2r\xc2@\x88\xbe\x94v\x9f\xd1fP',
-                     6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449)
+    @classmethod
+    def construct(cls, curve_id, public_value, private_value):
+        """Construct an ECDSA private key"""
 
-register_prime_curve(b'nistp384',
-                     39402006196394479212279040100143613805079739270465446667948293404245721771496870329047266088258938001861606973112319,
-                     -3,
-                     27580193559959705877849011840389048093056905856361568521428707301988689241309860865136260764883745107765439761230575,
-                     b'\x04\xaa\x87\xca"\xbe\x8b\x057\x8e\xb1\xc7\x1e\xf3 \xadtn\x1d;b\x8b\xa7\x9b\x98Y\xf7A\xe0\x82T*8U\x02\xf2]\xbfU)l:T^8rv\n\xb76\x17\xdeJ\x96&,o]\x9e\x98\xbf\x92\x92\xdc)\xf8\xf4\x1d\xbd(\x9a\x14|\xe9\xda1\x13\xb5\xf0\xb8\xc0\n`\xb1\xce\x1d~\x81\x9dzC\x1d|\x90\xea\x0e_',
-                     39402006196394479212279040100143613805079739270465446667946905279627659399113263569398956308152294913554433653942643)
+        curve = cls.lookup_curve(curve_id)
 
-register_prime_curve(b'nistp256',
-                     115792089210356248762697446949407573530086143415290314195533631308867097853951,
-                     -3,
-                     41058363725152142129326129780047268409114441015993725554835256314039467401291,
-                     b'\x04k\x17\xd1\xf2\xe1,BG\xf8\xbc\xe6\xe5c\xa4@\xf2w\x03}\x81-\xeb3\xa0\xf4\xa19E\xd8\x98\xc2\x96O\xe3B\xe2\xfe\x1a\x7f\x9b\x8e\xe7\xebJ|\x0f\x9e\x16+\xce3Wk1^\xce\xcb\xb6@h7\xbfQ\xf5',
-                     115792089210356248762697446949407573529996955224135760342422259061068512044369)
+        priv_key = ec.derive_private_key(private_value, curve(), backend)
+        priv = priv_key.private_numbers()
+        pub = priv.public_numbers
+
+        return cls(priv_key, curve_id, pub, public_value, priv)
+
+    @classmethod
+    def generate(cls, curve_id):
+        """Generate a new ECDSA private key"""
+
+        curve = cls.lookup_curve(curve_id)
+
+        priv_key = ec.generate_private_key(curve(), backend)
+        priv = priv_key.private_numbers()
+
+        pub_key = priv_key.public_key()
+        pub = pub_key.public_numbers()
+
+        public_value = pub_key.public_bytes(Encoding.X962,
+                                            PublicFormat.UncompressedPoint)
+
+        return cls(priv_key, curve_id, pub, public_value, priv)
+
+    def sign(self, data, hash_alg):
+        """Sign a block of data"""
+
+        # pylint: disable=unused-argument
+
+        priv_key = self.pyca_key
+        return priv_key.sign(data, ec.ECDSA(hashes[hash_alg]()))
+
+
+class ECDSAPublicKey(_ECKey):
+    """A shim around PyCA for ECDSA public keys"""
+
+    @classmethod
+    def construct(cls, curve_id, public_value):
+        """Construct an ECDSA public key"""
+
+        curve = cls.lookup_curve(curve_id)
+
+        pub_key = ec.EllipticCurvePublicKey.from_encoded_point(curve(),
+                                                               public_value)
+        pub = pub_key.public_numbers()
+
+        return cls(pub_key, curve_id, pub, public_value)
+
+    def verify(self, data, sig, hash_alg):
+        """Verify the signature on a block of data"""
+
+        try:
+            pub_key = self.pyca_key
+            pub_key.verify(sig, data, ec.ECDSA(hashes[hash_alg]()))
+            return True
+        except InvalidSignature:
+            return False
+
+
+class ECDH:
+    """A shim around PyCA for ECDH key exchange"""
+
+    def __init__(self, curve_id):
+        try:
+            curve = _curves[curve_id]
+        except KeyError: # pragma: no cover, other curves not registered
+            raise ValueError('Unknown EC curve %s' %
+                             curve_id.decode()) from None
+
+        self._priv_key = ec.generate_private_key(curve(), backend)
+
+    def get_public(self):
+        """Return the public key to send in the handshake"""
+
+        pub_key = self._priv_key.public_key()
+
+        return pub_key.public_bytes(Encoding.X962,
+                                    PublicFormat.UncompressedPoint)
+
+    def get_shared(self, peer_public):
+        """Return the shared key from the peer's public key"""
+
+        peer_key = ec.EllipticCurvePublicKey.from_encoded_point(
+            self._priv_key.curve, peer_public)
+
+        shared_key = self._priv_key.exchange(ec.ECDH(), peer_key)
+
+        return int.from_bytes(shared_key, 'big')

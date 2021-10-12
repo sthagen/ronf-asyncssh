@@ -1,11 +1,19 @@
-# Copyright (c) 2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2016-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -19,24 +27,36 @@ import asyncio
 import ctypes
 import ctypes.wintypes
 import errno
-import mmapfile
-import win32api
-import win32con
-import win32ui
+
+from .misc import open_file
+
+try:
+    import mmapfile
+    import win32api
+    import win32con
+    import win32ui
+    _pywin32_available = True
+except ImportError:
+    _pywin32_available = False
 
 
 _AGENT_COPYDATA_ID = 0x804e50ba
 _AGENT_MAX_MSGLEN = 8192
 _AGENT_NAME = 'Pageant'
 
+_DEFAULT_OPENSSH_PATH = r'\\.\pipe\openssh-ssh-agent'
+
 
 def _find_agent_window():
     """Find and return the Pageant window"""
 
-    try:
-        return win32ui.FindWindow(_AGENT_NAME, _AGENT_NAME)
-    except win32ui.error:
-        raise OSError(errno.ENOENT, 'Agent not found') from None
+    if _pywin32_available:
+        try:
+            return win32ui.FindWindow(_AGENT_NAME, _AGENT_NAME)
+        except win32ui.error:
+            raise OSError(errno.ENOENT, 'Agent not found') from None
+    else:
+        raise OSError(errno.ENOENT, 'PyWin32 not installed') from None
 
 
 class _CopyDataStruct(ctypes.Structure):
@@ -76,8 +96,7 @@ class _PageantTransport:
         except ValueError as exc:
             raise OSError(errno.EIO, str(exc)) from None
 
-    @asyncio.coroutine
-    def readexactly(self, n):
+    async def readexactly(self, n):
         """Read response data from Pageant agent"""
 
         if self._writing:
@@ -104,12 +123,48 @@ class _PageantTransport:
             self._mapfile = None
 
 
-@asyncio.coroutine
-def open_agent(loop, agent_path):
-    """Open a connection to the Pageant agent"""
+class _W10OpenSSHTransport:
+    """Transport to connect to OpenSSH agent on Windows 10"""
 
-    # pylint: disable=unused-argument
+    def __init__(self, agent_path):
+        self._agentfile = open_file(agent_path, 'r+b')
 
-    _find_agent_window()
-    transport = _PageantTransport()
+    def write(self, data):
+        """Write request data to OpenSSH agent"""
+
+        self._agentfile.write(data)
+
+    async def readexactly(self, n):
+        """Read response data from OpenSSH agent"""
+
+        result = self._agentfile.read(n)
+
+        if len(result) != n:
+            raise asyncio.IncompleteReadError(result, n)
+
+        return result
+
+    def close(self):
+        """Close the connection to OpenSSH"""
+
+        if self._agentfile:
+            self._agentfile.close()
+            self._agentfile = None
+
+
+async def open_agent(agent_path):
+    """Open a connection to the Pageant or Windows 10 OpenSSH agent"""
+
+    transport = None
+
+    if not agent_path:
+        try:
+            _find_agent_window()
+            transport = _PageantTransport()
+        except OSError:
+            agent_path = _DEFAULT_OPENSSH_PATH
+
+    if not transport:
+        transport = _W10OpenSSHTransport(agent_path)
+
     return transport, transport

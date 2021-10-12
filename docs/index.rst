@@ -27,7 +27,7 @@ key doesn't match.
 
    .. include:: ../examples/simple_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 This example only uses the output on stdout, but output on stderr is also
 collected as another attribute in the returned :class:`SSHCompletedProcess`
@@ -79,21 +79,21 @@ with". Here's the example above written using custom :class:`SSHClient` and
 
    .. include:: ../examples/callback_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 In cases where you don't need to customize callbacks on the SSHClient class,
 this code can be simplified somewhat to:
 
    .. include:: ../examples/callback_client2.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 If you need to distinguish output going to stdout vs. stderr, that's easy to
 do with the following change:
 
    .. include:: ../examples/callback_client3.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Interactive input
 -----------------
@@ -107,7 +107,7 @@ for it to exit, allowing interaction with it.
 
    .. include:: ../examples/math_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 When run, this program should produce the following output:
 
@@ -128,7 +128,7 @@ and the output written to '/tmp/stdout' should contain the reversed lines
 
    .. include:: ../examples/redirect_input.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 The ``stdin``, ``stdout``, and ``stderr`` arguments support redirecting
 to a variety of locations include local files, pipes, and sockets as
@@ -138,13 +138,13 @@ local process to a remote process:
 
    .. include:: ../examples/redirect_local_pipe.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Here's an example of piping one remote process to another:
 
    .. include:: ../examples/redirect_remote_pipe.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 In this example both remote processes are running on the same SSH
 connection, but this redirection can just as easily be used between
@@ -157,7 +157,7 @@ The following example shows how to test the exit status of a remote process:
 
    .. include:: ../examples/check_exit_status.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 If an exit signal is received, the exit status will be set to -1 and exit
 signal information is provided in the ``exit_signal`` attribute of the
@@ -175,7 +175,7 @@ process the results when all of them have completed:
 
    .. include:: ../examples/gather_results.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Results could be processed as they became available by setting up a
 loop which repeatedly called :func:`asyncio.wait` instead of calling
@@ -190,7 +190,7 @@ command.
 
    .. include:: ../examples/set_environment.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Any number of environment variables can be passed in the dictionary
 given to :meth:`create_session() <SSHClientConnection.create_session>`.
@@ -206,7 +206,7 @@ passed to the remote session.
 
    .. include:: ../examples/set_terminal.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Note that this will cause AsyncSSH to request a pseudo-tty from the
 server. When a pseudo-tty is used, the server will no longer send output
@@ -224,7 +224,7 @@ that port be forwarded across SSH to the server and on to port 80 on
 
    .. include:: ../examples/local_forwarding_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To listen on a dynamically assigned port, the client can pass in ``0``
 as the listening port. If the listener is successfully opened, the selected
@@ -233,7 +233,7 @@ method on the returned listener object:
 
    .. include:: ../examples/local_forwarding_client2.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 The client can also request remote port forwarding from the server. The
 following example shows the client requesting that the server listen on
@@ -242,7 +242,7 @@ and on to port 80 on ``localhost``:
 
    .. include:: ../examples/remote_forwarding_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To limit which connections are accepted or dynamically select where to
 forward traffic to, the client can implement their own session factory and
@@ -252,7 +252,7 @@ wish to reject:
 
    .. include:: ../examples/remote_forwarding_client2.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Just as with local listeners, the client can request remote port forwarding
 from a dynamic port by passing in ``0`` as the listening port and then call
@@ -277,7 +277,7 @@ the encoding to use when the connection is created.
 
    .. include:: ../examples/direct_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To use the streams API to open a direct connection, you can use
 :meth:`open_connection <SSHClientConnection.open_connection>` instead of
@@ -285,7 +285,7 @@ To use the streams API to open a direct connection, you can use
 
    .. include:: ../examples/stream_direct_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 Forwarded TCP connections
 -------------------------
@@ -302,7 +302,7 @@ we set the encoding explicitly so all data is sent and received as strings:
 
    .. include:: ../examples/listening_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To use the streams API to open a listening connection, you can use
 :meth:`start_server <SSHClientConnection.start_server>` instead
@@ -310,7 +310,7 @@ of :meth:`create_server <SSHClientConnection.create_server>`:
 
    .. include:: ../examples/stream_listening_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 SFTP client
 -----------
@@ -320,7 +320,7 @@ of starting an SFTP client and requesting the download of a file:
 
    .. include:: ../examples/sftp_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To recursively download a directory, preserving access and modification
 times and permissions on the files, the preserve and recurse arguments
@@ -349,7 +349,7 @@ downloading a file via SCP:
 
    .. include:: ../examples/scp_client.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To upload a file to a remote system, host information can be specified for
 the destination instead of the source:
@@ -368,12 +368,15 @@ of the original file name when performing the copy. For instance:
 If the destination path refers to a directory, the origin file name
 will be preserved, but it will be copied into the requested directory.
 
-Wild card patterns are also supported on source paths. For instance, the
-following copies all files with extension "txt":
+Wild card patterns are also supported on local source paths. For instance,
+the following copies all files with extension "txt":
 
    .. code::
 
       await asyncssh.scp('*.txt', 'localhost:')
+
+When copying files from a remote system, any wild card expansion is the
+responsibility of the remote SCP program or the shell which starts it.
 
 Similar to SFTP, SCP also supports options for recursively copying a
 directory and preserving modification times and permissions on files
@@ -422,7 +425,7 @@ a message when users authenticate successfully and start a shell.
 
    .. include:: ../examples/simple_server.py
       :literal:
-      :start-line: 14
+      :start-line: 22
 
 To authenticate with SSH client keys or certificates, the server would
 look something like the following. Client and certificate authority
@@ -431,7 +434,7 @@ a directory called ``authorized_keys``.
 
    .. include:: ../examples/simple_keyed_server.py
       :literal:
-      :start-line: 22
+      :start-line: 30
 
 It is also possible to use a single authorized_keys file for all users.
 This is common when using certificates, as AsyncSSH can automatically
@@ -442,7 +445,7 @@ place of :func:`create_server`.
 
    .. include:: ../examples/simple_cert_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Simple server with input
 ------------------------
@@ -452,7 +455,7 @@ It adds a column of numbers, displaying the total when it receives EOF.
 
    .. include:: ../examples/math_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Callback example
 ----------------
@@ -462,7 +465,7 @@ custom :class:`SSHServer` and :class:`SSHServerSession` subclasses.
 
    .. include:: ../examples/callback_math_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 I/O redirection
 ---------------
@@ -473,7 +476,7 @@ back to the SSH client:
 
    .. include:: ../examples/redirect_server.py
       :literal:
-      :start-line: 14
+      :start-line: 29
 
 Serving multiple clients
 ------------------------
@@ -484,7 +487,7 @@ basic chat service, where clients can send messages to one other.
 
    .. include:: ../examples/chat_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Line editing
 ------------
@@ -505,7 +508,7 @@ following code provides an example of this.
 
    .. include:: ../examples/editor.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Getting environment variables
 -----------------------------
@@ -518,7 +521,7 @@ need to set options in the client to get it to do so.
 
    .. include:: ../examples/show_environment.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Getting terminal information
 ----------------------------
@@ -529,7 +532,7 @@ session.
 
    .. include:: ../examples/show_terminal.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Port forwarding
 ---------------
@@ -543,7 +546,7 @@ other port are rejected.
 
    .. include:: ../examples/local_forwarding_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 The server can also support forwarding inbound TCP connections back to
 the client. The following example demonstrates a server which will accept
@@ -554,7 +557,7 @@ client.
 
    .. include:: ../examples/remote_forwarding_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Direct TCP connections
 ----------------------
@@ -566,7 +569,7 @@ echoes the data itself rather than forwarding the connection:
 
    .. include:: ../examples/direct_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 Here's an example of this server written using the streams API. In this
 case, :meth:`connection_requested() <SSHServer.connection_requested>`
@@ -577,7 +580,7 @@ connection.
 
    .. include:: ../examples/stream_direct_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 SFTP server
 -----------
@@ -587,7 +590,7 @@ behavior:
 
    .. include:: ../examples/simple_sftp_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 A subclass of :class:`SFTPServer` can be provided as the value of the SFTP
 factory to override specific behavior. For example, the following code
@@ -596,7 +599,7 @@ directory under ``/tmp/sftp``:
 
    .. include:: ../examples/chroot_sftp_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
 
 More complex path remapping can be performed by implementing the
 :meth:`map_path <SFTPServer.map_path>` and
@@ -615,4 +618,55 @@ instance:
 
    .. include:: ../examples/simple_scp_server.py
       :literal:
-      :start-line: 21
+      :start-line: 29
+
+Reverse Direction Example
+=========================
+
+One of the unique capabilities of AsyncSSH is its ability to support
+"reverse direction" SSH connections, using the functions
+:func:`connect_reverse` and :func:`listen_reverse`. This can be
+helpful when implementing protocols such as "NETCONF Call Home",
+described in :rfc:`8071`. When using this capability, the SSH protocol
+doesn't change, but the roles at the TCP level about which side acts
+as a TCP client and server are reversed, with the TCP client taking
+on the role of the SSH server and the TCP server taking on the role of
+the SSH client once the connection is established.
+
+For these examples to run, the following files must be created:
+
+  * The file ``client_host_key`` must exist on the client and contain an
+    SSH private key for the client to use to authenticate itself as a
+    host to the server. An SSH certificate can optionally be provided
+    in ``client_host_key-cert.pub``.
+  * The file ``trusted_server_keys`` must exist on the client and contain
+    a list of trusted server keys or a ``cert-authority`` entry with a
+    public key trusted to sign server keys if certificates are used. This
+    file should be in "authorized_keys" format.
+  * The file ``server_key`` must exist on the server and contain an SSH
+    private key for the server to use to authenticate itself to the
+    client. An SSH certificate can optionally be provided in
+    ``server_key-cert.pub``.
+  * The file ``trusted_client_host_keys`` must exist on the server and
+    contain a list of trusted client host keys or a ``@cert-authority``
+    entry with a public key trusted to sign client host keys if
+    certificates are used. This file should be in "known_hosts" format.
+
+Reverse Direction Client
+------------------------
+
+The following example shows a reverse-direction SSH client which will run
+arbitrary shell commands given to it by the server it connects to:
+
+   .. include:: ../examples/reverse_client.py
+      :literal:
+      :start-line: 32
+
+Reverse Direction Server
+------------------------
+
+Here is the corresponding server which makes requests to run the commands:
+
+   .. include:: ../examples/reverse_server.py
+      :literal:
+      :start-line: 32

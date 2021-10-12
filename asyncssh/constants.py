@@ -1,21 +1,30 @@
-# Copyright (c) 2013-2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
 """SSH constants"""
 
-# pylint: disable=bad-whitespace
-
 # Default language for error messages
 DEFAULT_LANG                        = 'en-US'
+
+# Default SSH listening port
+DEFAULT_PORT                        = 22
 
 # SSH message codes
 MSG_DISCONNECT                      = 1
@@ -47,6 +56,7 @@ MSG_REQUEST_FAILURE                 = 82
 MSG_CHANNEL_OPEN                    = 90
 MSG_CHANNEL_OPEN_CONFIRMATION       = 91
 MSG_CHANNEL_OPEN_FAILURE            = 92
+
 MSG_CHANNEL_WINDOW_ADJUST           = 93
 MSG_CHANNEL_DATA                    = 94
 MSG_CHANNEL_EXTENDED_DATA           = 95
@@ -55,6 +65,10 @@ MSG_CHANNEL_CLOSE                   = 97
 MSG_CHANNEL_REQUEST                 = 98
 MSG_CHANNEL_SUCCESS                 = 99
 MSG_CHANNEL_FAILURE                 = 100
+
+# Messages 90-92 are excluded here as they relate to opening a new channel
+MSG_CHANNEL_FIRST                   = 93
+MSG_CHANNEL_LAST                    = 127
 
 # SSH disconnect reason codes
 DISC_HOST_NOT_ALLOWED_TO_CONNECT    = 1
@@ -65,13 +79,16 @@ DISC_MAC_ERROR                      = 5
 DISC_COMPRESSION_ERROR              = 6
 DISC_SERVICE_NOT_AVAILABLE          = 7
 DISC_PROTOCOL_VERSION_NOT_SUPPORTED = 8
-DISC_HOST_KEY_NOT_VERIFYABLE        = 9
+DISC_HOST_KEY_NOT_VERIFIABLE        = 9
 DISC_CONNECTION_LOST                = 10
 DISC_BY_APPLICATION                 = 11
 DISC_TOO_MANY_CONNECTIONS           = 12
 DISC_AUTH_CANCELLED_BY_USER         = 13
 DISC_NO_MORE_AUTH_METHODS_AVAILABLE = 14
 DISC_ILLEGAL_USER_NAME              = 15
+
+DISC_HOST_KEY_NOT_VERIFYABLE        = 9   # Error in naming, left here to not
+                                          # break backward compatibility
 
 # SSH channel open failure reason codes
 OPEN_ADMINISTRATIVELY_PROHIBITED    = 1

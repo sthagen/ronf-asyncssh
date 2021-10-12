@@ -1,18 +1,25 @@
-# Copyright (c) 2013-2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
 
 """SSH port forwarding handlers"""
 
-import asyncio
 import socket
 
 from .misc import ChannelOpenError
@@ -43,7 +50,10 @@ class SSHForwarder:
     def write_eof(self):
         """Write end of file to the transport"""
 
-        self._transport.write_eof()
+        try:
+            self._transport.write_eof()
+        except OSError: # pragma: no cover
+            pass
 
     def was_eof_received(self):
         """Return whether end of file has been received or not"""
@@ -69,10 +79,8 @@ class SSHForwarder:
         if sock.family in {socket.AF_INET, socket.AF_INET6}:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-    def connection_lost(self, exc):
+    def connection_lost(self, _exc):
         """Handle an incoming connection close"""
-
-        # pylint: disable=unused-argument
 
         self.close()
 
@@ -85,10 +93,7 @@ class SSHForwarder:
         # pylint: disable=unused-argument
 
         if self._peer:
-            try:
-                self._peer.write(data)
-            except OSError: # pragma: no cover
-                pass
+            self._peer.write(data)
         else:
             self._inpbuf += data
 
@@ -98,14 +103,11 @@ class SSHForwarder:
         self._eof_received = True
 
         if self._peer:
-            try:
-                self._peer.write_eof()
-            except OSError: # pragma: no cover
-                pass
+            self._peer.write_eof()
 
             return not self._peer.was_eof_received()
         else:
-            return False
+            return True
 
     def pause_writing(self):
         """Pause writing by asking peer to pause reading"""
@@ -138,8 +140,7 @@ class SSHLocalForwarder(SSHForwarder):
         self._conn = conn
         self._coro = coro
 
-    @asyncio.coroutine
-    def _forward(self, *args):
+    async def _forward(self, *args):
         """Begin local forwarding"""
 
         def session_factory():
@@ -148,14 +149,22 @@ class SSHLocalForwarder(SSHForwarder):
             return SSHForwarder(self)
 
         try:
-            yield from self._coro(session_factory, *args)
-        except ChannelOpenError:
-            self.close()
+            await self._coro(session_factory, *args)
+        except ChannelOpenError as exc:
+            self.connection_lost(exc)
             return
 
         if self._inpbuf:
-            self.data_received(self._inpbuf)
+            self._peer.write(self._inpbuf)
             self._inpbuf = b''
+
+        if self._eof_received:
+            self._peer.write_eof()
+
+    def forward(self, *args):
+        """Start a task to begin local forwarding"""
+
+        self._conn.create_task(self._forward(*args))
 
 
 class SSHLocalPortForwarder(SSHLocalForwarder):
@@ -167,7 +176,7 @@ class SSHLocalPortForwarder(SSHLocalForwarder):
         super().connection_made(transport)
 
         orig_host, orig_port = transport.get_extra_info('peername')[:2]
-        self._conn.create_task(self._forward(orig_host, orig_port))
+        self.forward(orig_host, orig_port)
 
 
 class SSHLocalPathForwarder(SSHLocalForwarder):
@@ -177,5 +186,4 @@ class SSHLocalPathForwarder(SSHLocalForwarder):
         """Handle a newly opened connection"""
 
         super().connection_made(transport)
-
-        self._conn.create_task(self._forward())
+        self.forward()

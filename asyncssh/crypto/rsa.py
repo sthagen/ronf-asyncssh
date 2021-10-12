@@ -1,11 +1,19 @@
-# Copyright (c) 2014-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2014-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -14,11 +22,12 @@
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric.padding import MGF1, OAEP
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
-from cryptography.hazmat.primitives.hashes import SHA1, SHA256, SHA512
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from .misc import PyCAKey
+from .misc import PyCAKey, hashes
+
 
 # Short variable names are used here, matching names in the spec
 # pylint: disable=invalid-name
@@ -32,17 +41,6 @@ class _RSAKey(PyCAKey):
 
         self._pub = pub
         self._priv = priv
-
-    @staticmethod
-    def get_hash(algorithm):
-        """Return hash algorithm to use for signature"""
-
-        if algorithm == b'rsa-sha2-512':
-            return SHA512()
-        elif algorithm in (b'rsa-sha2-256', b'rsa2048-sha256'):
-            return SHA256()
-        else:
-            return SHA1()
 
     @property
     def n(self):
@@ -117,10 +115,21 @@ class RSAPrivateKey(_RSAKey):
 
         return cls(priv_key, pub, priv)
 
-    def sign(self, data, algorithm):
+    def decrypt(self, data, hash_alg):
+        """Decrypt a block of data"""
+
+        try:
+            hash_alg = hashes[hash_alg]()
+            priv_key = self.pyca_key
+            return priv_key.decrypt(data, OAEP(MGF1(hash_alg), hash_alg, None))
+        except ValueError:
+            return None
+
+    def sign(self, data, hash_alg):
         """Sign a block of data"""
 
-        return self.pyca_key.sign(data, PKCS1v15(), self.get_hash(algorithm))
+        priv_key = self.pyca_key
+        return priv_key.sign(data, PKCS1v15(), hashes[hash_alg]())
 
 
 class RSAPublicKey(_RSAKey):
@@ -135,12 +144,22 @@ class RSAPublicKey(_RSAKey):
 
         return cls(pub_key, pub)
 
-    def verify(self, data, sig, algorithm):
+    def encrypt(self, data, hash_alg):
+        """Encrypt a block of data"""
+
+        try:
+            hash_alg = hashes[hash_alg]()
+            pub_key = self.pyca_key
+            return pub_key.encrypt(data, OAEP(MGF1(hash_alg), hash_alg, None))
+        except ValueError:
+            return None
+
+    def verify(self, data, sig, hash_alg):
         """Verify the signature on a block of data"""
 
         try:
-            self.pyca_key.verify(sig, data, PKCS1v15(),
-                                 self.get_hash(algorithm))
+            pub_key = self.pyca_key
+            pub_key.verify(sig, data, PKCS1v15(), hashes[hash_alg]())
             return True
         except InvalidSignature:
             return False

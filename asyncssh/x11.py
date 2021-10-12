@@ -1,11 +1,19 @@
-# Copyright (c) 2016-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2016-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -18,14 +26,13 @@ import socket
 import time
 
 from collections import namedtuple
+from pathlib import Path
 
 from .constants import OPEN_CONNECT_FAILED
 from .forward import SSHForwarder
 from .listener import create_tcp_forward_listener
 from .logging import logger
 from .misc import ChannelOpenError
-
-# pylint: disable=bad-whitespace
 
 # Xauth address families
 XAUTH_FAMILY_IPV4     = 0
@@ -52,8 +59,6 @@ X11_MAX_DISPLAYS      = 64
 # Host to listen on when doing X11 forwarding
 X11_LISTEN_HOST       = 'localhost'
 
-# pylint: enable=bad-whitespace
-
 
 def _parse_display(display):
     """Parse an X11 display value"""
@@ -75,13 +80,12 @@ def _parse_display(display):
 
     return host, dpynum, screen
 
-@asyncio.coroutine
-def _lookup_host(loop, host, family):
+async def _lookup_host(loop, host, family):
     """Look up IPv4 or IPv6 addresses of a host name"""
 
     try:
-        addrinfo = yield from loop.getaddrinfo(host, 0, family=family,
-                                               type=socket.SOCK_STREAM)
+        addrinfo = await loop.getaddrinfo(host, 0, family=family,
+                                          type=socket.SOCK_STREAM)
     except socket.gaierror:
         return []
 
@@ -284,13 +288,12 @@ class SSHX11ClientListener:
 
         return self._remote_auth == {}
 
-    @asyncio.coroutine
-    def forward_connection(self):
+    async def forward_connection(self):
         """Forward an incoming connection to the local X server"""
 
         try:
-            _, peer = yield from self._connect_coro(SSHForwarder,
-                                                    *self._connect_args)
+            _, peer = await self._connect_coro(SSHForwarder,
+                                               *self._connect_args)
         except OSError as exc:
             raise ChannelOpenError(OPEN_CONNECT_FAILED, str(exc)) from None
 
@@ -346,7 +349,7 @@ def get_xauth_path(auth_path):
         auth_path = os.environ.get('XAUTHORITY')
 
     if not auth_path:
-        auth_path = os.path.join(os.path.expanduser('~'), '.Xauthority')
+        auth_path = str(Path('~', '.Xauthority').expanduser())
 
     return auth_path
 
@@ -392,8 +395,7 @@ def walk_xauth(auth_path):
         pass
 
 
-@asyncio.coroutine
-def lookup_xauth(loop, auth_path, host, dpynum):
+async def lookup_xauth(loop, auth_path, host, dpynum):
     """Look up Xauthority data for the specified display"""
 
     auth_path = get_xauth_path(auth_path)
@@ -412,15 +414,13 @@ def lookup_xauth(loop, auth_path, host, dpynum):
 
         if entry.family == XAUTH_FAMILY_IPV4:
             if not ipv4_addrs:
-                ipv4_addrs = yield from _lookup_host(loop, host,
-                                                     socket.AF_INET)
+                ipv4_addrs = await _lookup_host(loop, host, socket.AF_INET)
 
             addr = socket.inet_ntop(socket.AF_INET, entry.addr)
             match = addr in ipv4_addrs
         elif entry.family == XAUTH_FAMILY_IPV6:
             if not ipv6_addrs:
-                ipv6_addrs = yield from _lookup_host(loop, host,
-                                                     socket.AF_INET6)
+                ipv6_addrs = await _lookup_host(loop, host, socket.AF_INET6)
 
             addr = socket.inet_ntop(socket.AF_INET6, entry.addr)
             match = addr in ipv6_addrs
@@ -434,11 +434,10 @@ def lookup_xauth(loop, auth_path, host, dpynum):
         if match:
             return entry.proto, entry.data
 
-    logger.warning('No xauth entry found for display: using random auth')
+    logger.debug1('No xauth entry found for display: using random auth')
     return XAUTH_PROTO_COOKIE, os.urandom(XAUTH_COOKIE_LEN)
 
-@asyncio.coroutine
-def update_xauth(loop, auth_path, host, dpynum, auth_proto, auth_data):
+async def update_xauth(auth_path, host, dpynum, auth_proto, auth_data):
     """Update Xauthority data for the specified display"""
 
     if host.startswith('/') or host in ('', 'unix', 'localhost'):
@@ -461,7 +460,7 @@ def update_xauth(loop, auth_path, host, dpynum, auth_proto, auth_data):
         try:
             new_file = open(new_auth_path, 'xb')
         except FileExistsError:
-            yield from asyncio.sleep(XAUTH_LOCK_DELAY, loop=loop)
+            await asyncio.sleep(XAUTH_LOCK_DELAY)
         else:
             break
 
@@ -483,25 +482,23 @@ def update_xauth(loop, auth_path, host, dpynum, auth_proto, auth_data):
     os.replace(new_auth_path, auth_path)
 
 
-@asyncio.coroutine
-def create_x11_client_listener(loop, display, auth_path):
+async def create_x11_client_listener(loop, display, auth_path):
     """Create a listener to accept X11 connections forwarded over SSH"""
 
     host, dpynum, _ = _parse_display(display)
 
-    auth_proto, auth_data = yield from lookup_xauth(loop, auth_path,
-                                                    host, dpynum)
+    auth_proto, auth_data = await lookup_xauth(loop, auth_path, host, dpynum)
 
     return SSHX11ClientListener(loop, host, dpynum, auth_proto, auth_data)
 
 
-@asyncio.coroutine
-def create_x11_server_listener(conn, loop, auth_path, auth_proto, auth_data):
+async def create_x11_server_listener(conn, loop, auth_path,
+                                     auth_proto, auth_data):
     """Create a listener to forward X11 connections over SSH"""
 
     for dpynum in range(X11_DISPLAY_START, X11_MAX_DISPLAYS):
         try:
-            tcp_listener = yield from create_tcp_forward_listener(
+            tcp_listener = await create_tcp_forward_listener(
                 conn, loop, conn.create_x11_connection,
                 X11_LISTEN_HOST, X11_BASE_PORT + dpynum)
         except OSError:
@@ -510,8 +507,8 @@ def create_x11_server_listener(conn, loop, auth_path, auth_proto, auth_data):
         display = '%s:%d' % (X11_LISTEN_HOST, dpynum)
 
         try:
-            yield from update_xauth(loop, auth_path, X11_LISTEN_HOST, dpynum,
-                                    auth_proto, auth_data)
+            await update_xauth(auth_path, X11_LISTEN_HOST, dpynum,
+                               auth_proto, auth_data)
         except ValueError:
             tcp_listener.close()
             break

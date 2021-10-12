@@ -1,11 +1,19 @@
-# Copyright (c) 2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2017-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -33,7 +41,7 @@ _krb5_oid = der_encode(ObjectIdentifier('1.2.840.113554.1.2.2'))
 class _GSSBase:
     """GSS base class"""
 
-    # Overridden in client classes
+    # Overridden in child classes
     _mutual_auth_flag = 0
     _integrity_flag = 0
 
@@ -140,7 +148,7 @@ class GSSClient(_GSSBase):
             self._ctx = ClientAuth('Kerberos', targetspn=self._host,
                                    scflags=flags)
         except SSPIError as exc:
-            raise GSSError(1, 1, details=exc.strerror)
+            raise GSSError(1, 1, details=exc.strerror) from None
 
         self._init_token = self.step(None)
 
@@ -159,7 +167,7 @@ class GSSServer(_GSSBase):
         try:
             self._ctx = ServerAuth('Kerberos', spn=self._host, scflags=flags)
         except SSPIError as exc:
-            raise GSSError(1, 1, details=exc.strerror)
+            raise GSSError(1, 1, details=exc.strerror) from None
 
 
 class GSSError(Exception):

@@ -1,11 +1,19 @@
-# Copyright (c) 2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2018 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -22,8 +30,6 @@ from asyncssh.asn1 import RawDERObject, TaggedDERObject, PRIVATE
 
 class _TestASN1(unittest.TestCase):
     """Unit tests for ASN.1 module"""
-
-    # pylint: disable=bad-whitespace
 
     tests = [
         (None,                                '0500'),
@@ -75,9 +81,9 @@ class _TestASN1(unittest.TestCase):
         (BitString('10000001'),               '03020081'),
         (BitString('100000000'),              '0303078000'),
 
-        (IA5String(''),                       '1600'),
-        (IA5String('\0'),                     '160100'),
-        (IA5String('abc'),                    '1603616263'),
+        (IA5String(b''),                      '1600'),
+        (IA5String(b'\0'),                    '160100'),
+        (IA5String(b'abc'),                   '1603616263'),
 
         (ObjectIdentifier('0.0'),             '060100'),
         (ObjectIdentifier('1.2'),             '06012a'),
@@ -159,8 +165,6 @@ class _TestASN1(unittest.TestCase):
         '06020080',                           # Invalid component
         '06020081'                            # Incomplete component
     ]
-
-    # pylint: enable=bad-whitespace
 
     def test_asn1(self):
         """Unit test ASN.1 module"""

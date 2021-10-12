@@ -1,11 +1,19 @@
-# Copyright (c) 2015-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2015-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -18,6 +26,7 @@
 
 import binascii
 import hmac
+
 from hashlib import sha1
 
 try:
@@ -26,7 +35,7 @@ try:
 except ImportError: # pragma: no cover
     _x509_available = False
 
-from .misc import ip_address
+from .misc import ip_address, read_file
 from .pattern import HostPatternList
 from .public_key import KeyImportError, import_public_key
 from .public_key import import_certificate, import_certificate_subject
@@ -79,10 +88,8 @@ class _HashedHost:
         hosthash = hmac.new(self._salt, value.encode(), sha1).digest()
         return hosthash == self._hosthash
 
-    def matches(self, host, addr, ip):
+    def matches(self, host, addr, _ip):
         """Return whether a host or address matches this host hash"""
-
-        # pylint: disable=unused-argument
 
         return (host and self._match(host)) or (addr and self._match(addr))
 
@@ -90,9 +97,15 @@ class _HashedHost:
 class SSHKnownHosts:
     """An SSH known hosts list"""
 
-    def __init__(self, known_hosts):
+    def __init__(self, known_hosts=None):
         self._exact_entries = {}
         self._pattern_entries = []
+
+        if known_hosts:
+            self.load(known_hosts)
+
+    def load(self, known_hosts):
+        """Load known hosts data into this object"""
 
         for line in known_hosts.splitlines():
             line = line.strip()
@@ -161,7 +174,13 @@ class SSHKnownHosts:
     def _match(self, host, addr, port=None):
         """Find host keys matching specified host, address, and port"""
 
-        ip = ip_address(addr) if addr else None
+        if addr:
+            ip = ip_address(addr)
+        else:
+            try:
+                ip = ip_address(host)
+            except ValueError:
+                ip = None
 
         if port:
             host = '[{}]:{}'.format(host, port) if host else None
@@ -209,12 +228,15 @@ class SSHKnownHosts:
            If the port is not the default port and no match is found
            for it, the lookup is attempted again without a port number.
 
-           :param str host:
+           :param host:
                The hostname of the target host
-           :param str addr:
+           :param addr:
                The IP address of the target host
-           :param int port:
-               The port number on the target host, or ``None`` for the default
+           :param port:
+               The port number on the target host, or `None` for the default
+           :type host: `str`
+           :type addr: `str`
+           :type port: `int`
 
 
            :returns: A tuple of matching host keys, CA keys, and revoked keys
@@ -238,8 +260,9 @@ def import_known_hosts(data):
        This function imports known host patterns and keys in
        OpenSSH known hosts format.
 
-       :param str data:
+       :param data:
            The known hosts data to import
+       :type data: `str`
 
        :returns: An :class:`SSHKnownHosts` object
 
@@ -247,31 +270,40 @@ def import_known_hosts(data):
 
     return SSHKnownHosts(data)
 
-def read_known_hosts(filename):
-    """Read SSH known hosts from a file
+
+def read_known_hosts(filelist):
+    """Read SSH known hosts from a file or list of files
 
        This function reads known host patterns and keys in
-       OpenSSH known hosts format from a file.
+       OpenSSH known hosts format from a file or list of files.
 
-       :param str filename:
-           The file to read the known hosts from
+       :param filelist:
+           The file or list of files to read the known hosts from
+       :type filelist: `str` or `list` of `str`
 
        :returns: An :class:`SSHKnownHosts` object
 
     """
 
-    with open(filename, 'r') as f:
-        return import_known_hosts(f.read())
+    known_hosts = SSHKnownHosts()
+
+    if isinstance(filelist, str):
+        filelist = [filelist]
+
+    for filename in filelist:
+        known_hosts.load(read_file(filename, 'r'))
+
+    return known_hosts
 
 
 def match_known_hosts(known_hosts, host, addr, port):
     """Match a host, IP address, and port against a known_hosts list
 
        This function looks up a host, IP address, and port in a list of
-       host patterns in OpenSSH ``known_hosts`` format and returns the
+       host patterns in OpenSSH `known_hosts` format and returns the
        host keys, CA keys, and revoked keys which match.
 
-       The ``known_hosts`` argument can be any of the following:
+       The `known_hosts` argument can be any of the following:
 
            * a string containing the filename to load host patterns from
            * a byte string containing host pattern data to load
@@ -288,18 +320,23 @@ def match_known_hosts(known_hosts, host, addr, port):
 
        :param known_hosts:
            The host patterns to match against
-       :param str host:
+       :param host:
            The hostname of the target host
-       :param str addr:
+       :param addr:
            The IP address of the target host
-       :param int port:
-           The port number on the target host, or ``None`` for the default
+       :param port:
+           The port number on the target host, or `None` for the default
+       :type host: `str`
+       :type addr: `str`
+       :type port: `int`
 
        :returns: A tuple of matching host keys, CA keys, and revoked keys
 
     """
 
-    if isinstance(known_hosts, str):
+    if isinstance(known_hosts, str) or \
+            (known_hosts and isinstance(known_hosts, list) and
+             isinstance(known_hosts[0], str)):
         known_hosts = read_known_hosts(known_hosts)
     elif isinstance(known_hosts, bytes):
         known_hosts = import_known_hosts(known_hosts.decode())

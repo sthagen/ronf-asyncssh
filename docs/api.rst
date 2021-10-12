@@ -67,7 +67,8 @@ and get back an object containing captured output and exit status, the
 :meth:`run() <SSHClientConnection.run>` method can be used. It returns an
 :class:`SSHCompletedProcess` with the results of the run, or can be set up
 to raise :class:`ProcessError` if the process exits with a non-zero exit
-status.
+status. It can also raise :class:`TimeoutError` if a specified timeout
+expires before the process exits.
 
 The client can also set up TCP port forwarding by calling
 :meth:`forward_local_port() <SSHClientConnection.forward_local_port>` or
@@ -77,6 +78,11 @@ UNIX domain socket forwarding by calling :meth:`forward_local_path()
 <SSHClientConnection.forward_remote_path>`. In these cases, data transfer on
 the channels is managed automatically by AsyncSSH whenever new connections
 are opened, so custom session objects are not required.
+
+Dynamic TCP port forwarding can be set up by calling :meth:`forward_socks()
+<SSHClientConnection.forward_socks>`. The SOCKS listener set up by
+AsyncSSH on the requested port accepts SOCKS connect requests and is
+compatible with SOCKS versions 4, 4a, and 5.
 
 When an SSH server receives a new connection and authentication is successful,
 handlers such as :meth:`session_requested() <SSHServer.session_requested>`,
@@ -99,7 +105,10 @@ starting up an SSH server. When this feature is enabled, server sessions
 can enable or disable line mode using the :meth:`set_line_mode()
 <SSHLineEditorChannel.set_line_mode>` method of :class:`SSHLineEditorChannel`.
 They can also enable or disable input echoing using the :meth:`set_echo()
-<SSHLineEditorChannel.set_echo>` method.
+<SSHLineEditorChannel.set_echo>` method. Handling of specific keys during
+line editing can be customized using the :meth:`register_key()
+<SSHLineEditorChannel.register_key>` and :meth:`unregister_key()
+<SSHLineEditorChannel.unregister_key>` methods.
 
 Each session object also has an associated :class:`SSHClientChannel`,
 :class:`SSHServerChannel`, or :class:`SSHTCPChannel` object passed to it
@@ -116,6 +125,26 @@ found under :ref:`Constants`.
 Main Functions
 ==============
 
+connect
+-------
+
+.. autofunction:: connect
+
+connect_reverse
+---------------
+
+.. autofunction:: connect_reverse
+
+listen
+------
+
+.. autofunction:: listen
+
+listen_reverse
+--------------
+
+.. autofunction:: listen_reverse
+
 create_connection
 -----------------
 
@@ -126,15 +155,10 @@ create_server
 
 .. autofunction:: create_server
 
-connect
--------
+get_server_host_key
+-------------------
 
-.. autofunction:: connect
-
-listen
-------
-
-.. autofunction:: listen
+.. autofunction:: get_server_host_key
 
 scp
 ---
@@ -156,6 +180,13 @@ SSHClient
    .. automethod:: connection_lost
    .. automethod:: debug_msg_received
    ================================== =
+
+   ======================================== =
+   Host key validation handlers
+   ======================================== =
+   .. automethod:: validate_host_public_key
+   .. automethod:: validate_host_ca_key
+   ======================================== =
 
    ==================================== =
    General authentication handlers
@@ -203,6 +234,7 @@ SSHServer
    General authentication handlers
    =============================== =
    .. automethod:: begin_auth
+   .. automethod:: auth_completed
    =============================== =
 
    ====================================== =
@@ -210,6 +242,15 @@ SSHServer
    ====================================== =
    .. automethod:: validate_gss_principal
    ====================================== =
+
+   ========================================= =
+   Host-based authentication handlers
+   ========================================= =
+   .. automethod:: host_based_auth_supported
+   .. automethod:: validate_host_public_key
+   .. automethod:: validate_host_ca_key
+   .. automethod:: validate_host_based_user
+   ========================================= =
 
    ========================================= =
    Public key authentication handlers
@@ -253,24 +294,37 @@ SSHClientConnection
 
 .. autoclass:: SSHClientConnection()
 
-   ============================== =
-   General connection methods
-   ============================== =
-   .. automethod:: get_extra_info
-   .. automethod:: send_debug
-   ============================== =
+   ========================= =
+   Connection attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
 
-   ================================================================================================================================= =
+   =================================== =
+   General connection methods
+   =================================== =
+   .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
+   .. automethod:: set_keepalive
+   .. automethod:: get_server_host_key
+   .. automethod:: send_debug
+   =================================== =
+
+   ====================================================================================================================================================== =
    Client session open methods
-   ================================================================================================================================= =
+   ====================================================================================================================================================== =
    .. automethod:: create_session
    .. automethod:: open_session
    .. automethod:: create_process(*args, bufsize=io.DEFAULT_BUFFER_SIZE, input=None, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs)
-   .. automethod:: run(*args, check=False, **kwargs)
+   .. automethod:: create_subprocess(protocol_factory, *args, bufsize=io.DEFAULT_BUFFER_SIZE, input=None, stdin=PIPE, stdout=PIPE, stderr=PIPE, **kwargs)
+   .. automethod:: run(*args, check=False, timeout=None, **kwargs)
    .. automethod:: start_sftp_client
    .. automethod:: create_ssh_connection
    .. automethod:: connect_ssh
-   ================================================================================================================================= =
+   .. automethod:: connect_reverse_ssh
+   .. automethod:: listen_ssh
+   .. automethod:: listen_reverse_ssh
+   ====================================================================================================================================================== =
 
    ====================================== =
    Client connection open methods
@@ -293,6 +347,7 @@ SSHClientConnection
    .. automethod:: forward_local_path
    .. automethod:: forward_remote_port
    .. automethod:: forward_remote_path
+   .. automethod:: forward_socks
    =================================== =
 
    =========================== =
@@ -309,10 +364,18 @@ SSHServerConnection
 
 .. autoclass:: SSHServerConnection()
 
+   ========================= =
+   Connection attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
+
    ============================== =
    General connection methods
    ============================== =
    .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
+   .. automethod:: set_keepalive
    .. automethod:: send_debug
    ============================== =
 
@@ -360,6 +423,16 @@ SSHServerConnection
    .. automethod:: wait_closed
    =========================== =
 
+SSHClientConnectionOptions
+--------------------------
+
+.. autoclass:: SSHClientConnectionOptions()
+
+SSHServerConnectionOptions
+--------------------------
+
+.. autoclass:: SSHServerConnectionOptions()
+
 Process Classes
 ===============
 
@@ -372,6 +445,7 @@ SSHClientProcess
    Client process attributes
    ============================== =
    .. autoattribute:: channel
+   .. autoattribute:: logger
    .. autoattribute:: env
    .. autoattribute:: command
    .. autoattribute:: subsystem
@@ -380,12 +454,15 @@ SSHClientProcess
    .. autoattribute:: stderr
    .. autoattribute:: exit_status
    .. autoattribute:: exit_signal
+   .. autoattribute:: returncode
    ============================== =
 
    ==================================== =
    Other client process methods
    ==================================== =
+   .. automethod:: get_extra_info
    .. automethod:: redirect
+   .. automethod:: collect_output
    .. automethod:: communicate
    .. automethod:: wait
    .. automethod:: change_terminal_size
@@ -399,6 +476,7 @@ SSHClientProcess
    .. automethod:: terminate
    .. automethod:: kill
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================ =
 
@@ -411,22 +489,24 @@ SSHServerProcess
    Server process attributes
    ============================== =
    .. autoattribute:: channel
-   .. autoattribute:: env
+   .. autoattribute:: logger
    .. autoattribute:: command
    .. autoattribute:: subsystem
+   .. autoattribute:: env
+   .. autoattribute:: term_type
+   .. autoattribute:: term_size
+   .. autoattribute:: term_modes
    .. autoattribute:: stdin
    .. autoattribute:: stdout
    .. autoattribute:: stderr
    ============================== =
 
-   ================================= =
+   ============================== =
    Other server process methods
-   ================================= =
-   .. automethod:: get_terminal_type
-   .. automethod:: get_terminal_size
-   .. automethod:: get_terminal_mode
+   ============================== =
+   .. automethod:: get_extra_info
    .. automethod:: redirect
-   ================================= =
+   ============================== =
 
    ================================ =
    Server process close methods
@@ -434,6 +514,7 @@ SSHServerProcess
    .. automethod:: exit
    .. automethod:: exit_with_signal
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ================================ =
 
@@ -441,6 +522,110 @@ SSHCompletedProcess
 -------------------
 
 .. autoclass:: SSHCompletedProcess()
+
+SSHSubprocessReadPipe
+---------------------
+
+.. autoclass:: SSHSubprocessReadPipe()
+
+   ==================================== =
+   General subprocess pipe info methods
+   ==================================== =
+   .. automethod:: get_extra_info
+   ==================================== =
+
+   ============================== =
+   Subprocess pipe read methods
+   ============================== =
+   .. automethod:: pause_reading
+   .. automethod:: resume_reading
+   ============================== =
+
+   ===================================== =
+   General subprocess pipe close methods
+   ===================================== =
+   .. automethod:: close
+   ===================================== =
+
+SSHSubprocessWritePipe
+----------------------
+
+.. autoclass:: SSHSubprocessWritePipe()
+
+   ==================================== =
+   General subprocess pipe info methods
+   ==================================== =
+   .. automethod:: get_extra_info
+   ==================================== =
+
+   ======================================= =
+   Subprocess pipe write methods
+   ======================================= =
+   .. automethod:: can_write_eof
+   .. automethod:: get_write_buffer_size
+   .. automethod:: set_write_buffer_limits
+   .. automethod:: write
+   .. automethod:: writelines
+   .. automethod:: write_eof
+   ======================================= =
+
+   ===================================== =
+   General subprocess pipe close methods
+   ===================================== =
+   .. automethod:: abort
+   .. automethod:: close
+   ===================================== =
+
+SSHSubprocessProtocol
+---------------------
+
+.. autoclass:: SSHSubprocessProtocol
+
+   ==================================== =
+   General subprocess protocol handlers
+   ==================================== =
+   .. automethod:: connection_made
+   .. automethod:: pipe_connection_lost
+   ==================================== =
+
+   ================================== =
+   Subprocess protocol read handlers
+   ================================== =
+   .. automethod:: pipe_data_received
+   ================================== =
+
+   ================================== =
+   Other subprocess protocol handlers
+   ================================== =
+   .. automethod:: process_exited
+   ================================== =
+
+SSHSubprocessTransport
+----------------------
+
+.. autoclass:: SSHSubprocessTransport
+
+   ==================================== =
+   General subprocess transport methods
+   ==================================== =
+   .. automethod:: get_extra_info
+   .. automethod:: get_pid
+   .. automethod:: get_pipe_transport
+   .. automethod:: get_returncode
+   .. automethod:: change_terminal_size
+   .. automethod:: send_break
+   .. automethod:: send_signal
+   ==================================== =
+
+   ================================== =
+   Subprocess transport close methods
+   ================================== =
+   .. automethod:: terminate
+   .. automethod:: kill
+   .. automethod:: close
+   .. automethod:: is_closing
+   .. automethod:: wait_closed
+   ================================== =
 
 Session Classes
 ===============
@@ -586,10 +771,17 @@ SSHClientChannel
 
 .. autoclass:: SSHClientChannel()
 
+   ========================= =
+   Channel attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
+
    =============================== =
    General channel info methods
    =============================== =
    .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
    .. automethod:: get_environment
    .. automethod:: get_command
    .. automethod:: get_subsystem
@@ -618,6 +810,7 @@ SSHClientChannel
    ===================================== =
    .. automethod:: get_exit_status
    .. automethod:: get_exit_signal
+   .. automethod:: get_returncode
    .. automethod:: change_terminal_size
    .. automethod:: send_break
    .. automethod:: send_signal
@@ -630,6 +823,7 @@ SSHClientChannel
    ============================= =
    .. automethod:: abort
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================= =
 
@@ -638,24 +832,32 @@ SSHServerChannel
 
 .. autoclass:: SSHServerChannel()
 
+   ========================= =
+   Channel attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
+
    =============================== =
    General channel info methods
    =============================== =
    .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
    .. automethod:: get_environment
    .. automethod:: get_command
    .. automethod:: get_subsystem
    =============================== =
 
-   ================================= =
+   ================================== =
    Server channel info methods
-   ================================= =
+   ================================== =
    .. automethod:: get_terminal_type
    .. automethod:: get_terminal_size
    .. automethod:: get_terminal_mode
+   .. automethod:: get_terminal_modes
    .. automethod:: get_x11_display
    .. automethod:: get_agent_path
-   ================================= =
+   ================================== =
 
    ============================== =
    Server channel read methods
@@ -690,6 +892,7 @@ SSHServerChannel
    ============================= =
    .. automethod:: abort
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================= =
 
@@ -698,22 +901,31 @@ SSHLineEditorChannel
 
 .. autoclass:: SSHLineEditorChannel()
 
-   ============================= =
+   ============================== =
    Line editor methods
-   ============================= =
+   ============================== =
+   .. automethod:: register_key
+   .. automethod:: unregister_key
    .. automethod:: set_line_mode
    .. automethod:: set_echo
-   ============================= =
+   ============================== =
 
 SSHTCPChannel
 -------------
 
 .. autoclass:: SSHTCPChannel()
 
+   ========================= =
+   Channel attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
+
    ============================== =
    General channel info methods
    ============================== =
    .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
    ============================== =
 
    ============================== =
@@ -739,6 +951,7 @@ SSHTCPChannel
    ============================= =
    .. automethod:: abort
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================= =
 
@@ -747,10 +960,17 @@ SSHUNIXChannel
 
 .. autoclass:: SSHUNIXChannel()
 
+   ========================= =
+   Channel attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
+
    ============================== =
    General channel info methods
    ============================== =
    .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
    ============================== =
 
    ============================== =
@@ -776,15 +996,25 @@ SSHUNIXChannel
    ============================= =
    .. automethod:: abort
    .. automethod:: close
+   .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================= =
 
 Listener Classes
 ================
 
-SSHListener
+SSHAcceptor
 -----------
 
+.. autoclass:: SSHAcceptor()
+
+   ====================== =
+   .. automethod:: update
+   ====================== =
+
+
+SSHListener
+-----------
 .. autoclass:: SSHListener()
 
    =========================== =
@@ -803,7 +1033,10 @@ SSHReader
 
    ============================== =
    .. autoattribute:: channel
+   .. autoattribute:: logger
    .. automethod:: get_extra_info
+   .. automethod:: feed_data
+   .. automethod:: feed_eof
    .. automethod:: at_eof
    .. automethod:: read
    .. automethod:: readline
@@ -818,13 +1051,16 @@ SSHWriter
 
    ============================== =
    .. autoattribute:: channel
+   .. autoattribute:: logger
    .. automethod:: get_extra_info
    .. automethod:: can_write_eof
-   .. automethod:: close
    .. automethod:: drain
    .. automethod:: write
    .. automethod:: writelines
    .. automethod:: write_eof
+   .. automethod:: close
+   .. automethod:: is_closing
+   .. automethod:: wait_closed
    ============================== =
 
 SFTP Support
@@ -834,6 +1070,12 @@ SFTPClient
 ----------
 
 .. autoclass:: SFTPClient()
+
+   ========================= =
+   SFTP client attributes
+   ========================= =
+   .. autoattribute:: logger
+   ========================= =
 
    ===================== =
    File transfer methods
@@ -846,10 +1088,10 @@ SFTPClient
    .. automethod:: mcopy
    ===================== =
 
-   ========================================================================================== =
+   ============================================================================================================================== =
    File access methods
-   ========================================================================================== =
-   .. automethod:: open(path, mode='r', attrs=SFTPAttrs(), encoding='utf-8', errors='strict')
+   ============================================================================================================================== =
+   .. automethod:: open(path, mode='r', attrs=SFTPAttrs(), encoding='utf-8', errors='strict', block_size=16384, max_requests=128)
    .. automethod:: truncate
    .. automethod:: rename
    .. automethod:: posix_rename
@@ -859,7 +1101,7 @@ SFTPClient
    .. automethod:: symlink
    .. automethod:: link
    .. automethod:: realpath
-   ========================================================================================== =
+   ============================================================================================================================== =
 
    ============================= =
    File attribute access methods
@@ -881,17 +1123,20 @@ SFTPClient
    .. automethod:: islink
    ============================= =
 
-   ============================================== =
+   ================================================= =
    Directory access methods
-   ============================================== =
+   ================================================= =
    .. automethod:: chdir
    .. automethod:: getcwd
    .. automethod:: mkdir(path, attrs=SFTPAttrs())
+   .. automethod:: makedirs(path, attrs=SFTPAttrs())
    .. automethod:: rmdir
+   .. automethod:: rmtree
+   .. automethod:: scandir
    .. automethod:: readdir
    .. automethod:: listdir
    .. automethod:: glob
-   ============================================== =
+   ================================================= =
 
    =========================== =
    Cleanup methods
@@ -925,6 +1170,15 @@ SFTPServer
 ----------
 
 .. autoclass:: SFTPServer
+
+   ============================= =
+   SFTP server attributes
+   ============================= =
+   .. autoattribute:: channel
+   .. autoattribute:: connection
+   .. autoattribute:: env
+   .. autoattribute:: logger
+   ============================= =
 
    ================================== =
    Path remapping and display methods
@@ -1001,13 +1255,14 @@ Public Key Support
 
 AsyncSSH has extensive public key and certificate support.
 
-Supported public key types include DSA, RSA, and ECDSA. In addition,
-Ed25519 keys are supported if the libnacl package and libsodium library
-are installed.
+Supported public key types include DSA, RSA, and ECDSA. In addition, Ed25519
+and Ed448 keys are supported if OpenSSL 1.1.1b or later is installed.
+Alternately, Ed25519 support is available when the libnacl package and
+libsodium library are installed.
 
 Supported certificate types include OpenSSH version 01 certificates for
-DSA, RSA, ECDSA, and Ed25519 keys and X.509 certificates for DSA, RSA,
-and ECDSA keys.
+DSA, RSA, ECDSA, Ed25519, and Ed448 keys and X.509 certificates for DSA,
+RSA, and ECDSA keys.
 
 Support is also available for the certificate critical options of
 force-command and source-address and the extensions permit-X11-forwarding,
@@ -1056,6 +1311,12 @@ When using X.509 certificates, a list of certificates can also be
 provided. These certificates should form a trust chain from a user or
 host certificate up to some self-signed root certificate authority
 which is trusted by the remote system.
+
+Instead of passing tuples of keys and certificates or relying on file
+naming conventions for certificates, you also have the option of
+providing a list of keys and a seperate list of certificates. In this
+case, AsyncSSH will automatically match up the keys with their
+associated certificates when they are present.
 
 New private keys can be generated using the :func:`generate_private_key`
 function. The resulting :class:`SSHKey` objects have methods which can
@@ -1174,11 +1435,10 @@ methods. These values can be specified in any of the following ways:
     * A string value in the form ``YYYYMMDD`` to specify an absolute date.
     * A string value in the form ``YYYYMMDDHHMMSS`` to specify an
       absolute date and time.
-    * A relative time made up of a mix of positive or negative numbers and
-      the letters 'w', 'd', 'h', 'm', and 's', representing an offset from
-      the current time in weeks, days, hours, minutes, or seconds,
-      respectively. Multiple of these values can be included. For
-      instance, '+1w2d3h' means 1 week, 2 days, and 3 hours in the future.
+    * A time interval described in :ref:`SpecifyingTimeIntervals` which is
+      interpreted as a relative time from now. This value can be negative
+      to refer to times in the past or positive to refer to times in the
+      future.
 
 SSHKey
 ------
@@ -1187,8 +1447,10 @@ SSHKey
 
    ============================================== =
    .. automethod:: get_algorithm
+   .. automethod:: get_comment_bytes
    .. automethod:: get_comment
    .. automethod:: set_comment
+   .. automethod:: get_fingerprint
    .. automethod:: convert_to_public
    .. automethod:: generate_user_certificate
    .. automethod:: generate_host_certificate
@@ -1208,12 +1470,14 @@ SSHKeyPair
 
 .. autoclass:: SSHKeyPair()
 
-   ============================= =
+   ================================= =
    .. automethod:: get_key_type
    .. automethod:: get_algorithm
+   .. automethod:: set_certificate
+   .. automethod:: get_comment_bytes
    .. automethod:: get_comment
    .. automethod:: set_comment
-   ============================= =
+   ================================= =
 
 SSHCertificate
 --------------
@@ -1222,6 +1486,7 @@ SSHCertificate
 
    ================================== =
    .. automethod:: get_algorithm
+   .. automethod:: get_comment_bytes
    .. automethod:: get_comment
    .. automethod:: set_comment
    .. automethod:: export_certificate
@@ -1294,6 +1559,16 @@ load_certificates
 
 .. autofunction:: load_certificates
 
+load_pkcs11_keys
+----------------
+
+.. autofunction:: load_pkcs11_keys
+
+load_resident_keys
+------------------
+
+.. autofunction:: load_resident_keys
+
 .. index:: SSH agent support
 
 SSH Agent Support
@@ -1344,6 +1619,7 @@ SSHAgentClient
    .. automethod:: unlock
    .. automethod:: query_extensions
    .. automethod:: close
+   .. automethod:: wait_closed
    ===================================== =
 
 SSHAgentKeyPair
@@ -1351,18 +1627,203 @@ SSHAgentKeyPair
 
 .. autoclass:: SSHAgentKeyPair()
 
-   ============================= =
+   ================================= =
    .. automethod:: get_key_type
    .. automethod:: get_algorithm
+   .. automethod:: get_comment_bytes
    .. automethod:: get_comment
    .. automethod:: set_comment
    .. automethod:: remove
-   ============================= =
+   ================================= =
 
 connect_agent
 -------------
 
 .. autofunction:: connect_agent
+
+.. index:: Config file support
+.. _ConfigFileSupport:
+
+Config File Support
+===================
+
+AsyncSSH has partial support for parsing OpenSSH client and server
+configuration files (documented in the "ssh_config" and "sshd_config"
+UNIX man pages, respectively). Not all OpenSSH configuration options
+are applicable, so unsupported options are simply ignored. See below
+for the OpenSSH config options that AsyncSSH supports.
+
+AsyncSSH also supports "Host" and "Match" conditional blocks. As with
+the config options themselves, not all match criteria  are supported,
+but the supported criteria should function similar to OpenSSH.
+
+AsyncSSH also supports the "Include" directive, to allow one config
+file trigger the loading of others.
+
+.. index:: Supported client config options
+.. _SupportedClientConfigOptions:
+
+Supported client config options
+-------------------------------
+
+The following OpenSSH client config options are currently supported:
+
+  | AddressFamily
+  | BindAddress
+  | CASignatureAlgorithms
+  | CertificateFile
+  | ChallengeResponseAuthentication
+  | Ciphers
+  | Compression
+  | ConnectTimeout
+  | EnableSSHKeySign
+  | ForwardAgent
+  | ForwardX11Trusted
+  | GlobalKnownHostsFile
+  | GSSAPIAuthentication
+  | GSSAPIDelegateCredentials
+  | GSSAPIKeyExchange
+  | HostbasedAuthentication
+  | HostKeyAlgorithms
+  | HostKeyAlias
+  | Hostname
+  | IdentityAgent
+  | IdentityFile
+  | KbdInteractiveAuthentication
+  | KexAlgorithms
+  | MACs
+  | PasswordAuthentication
+  | PreferredAuthentications
+  | Port
+  | ProxyCommand
+  | ProxyJump
+  | PubkeyAuthentication
+  | RekeyLimit
+  | RemoteCommand
+  | RequestTTY
+  | SendEnv
+  | ServerAliveCountMax
+  | ServerAliveInterval
+  | SetEnv
+  | TCPKeepAlive
+  | User
+  | UserKnownHostsFile
+
+For the "Match" conditional, the following criteria are currently supported:
+
+  | All
+  | Host
+  | LocalUser
+  | OriginalHost
+  | User
+
+The following client config token expansions are currently supported:
+
+  ===== ============================================================
+  Token Expansion
+  ===== ============================================================
+  %%    Literal '%'
+  %C    SHA-1 Hash of connection info (local host, host, port, user)
+  %d    Local user's home directory
+  %h    Remote host
+  %i    Local uid (UNIX-only)
+  %L    Short local hostname (without the domain)
+  %l    Local hostname (including the domain)
+  %n    Original remote host
+  %p    Remote port
+  %r    Remote username
+  %u    Local username
+  ===== ============================================================
+
+These expansions are available in the values of the following config options:
+
+  | CertificateFile
+  | IdentityAgent
+  | IdentityFile
+  | RemoteCommand
+
+.. index:: Supported server config options
+.. _SupportedServerConfigOptions:
+
+Supported server config options
+-------------------------------
+
+The following OpenSSH server config options are currently supported:
+
+  | AddressFamily
+  | AuthorizedKeysFile
+  | AllowAgentForwarding
+  | BindAddress
+  | CASignatureAlgorithms
+  | ChallengeResponseAuthentication
+  | Ciphers
+  | ClientAliveCountMax
+  | ClientAliveInterval
+  | Compression
+  | GSSAPIAuthentication
+  | GSSAPIKeyExchange
+  | HostbasedAuthentication
+  | HostCertificate
+  | HostKey
+  | KbdInteractiveAuthentication
+  | KexAlgorithms
+  | LoginGraceTime
+  | MACs
+  | PasswordAuthentication
+  | PermitTTY
+  | Port
+  | ProxyCommand
+  | PubkeyAuthentication
+  | RekeyLimit
+  | TCPKeepAlive
+  | UseDNS
+
+For the "Match" conditional, the following criteria are currently supported:
+
+  | All
+  | Address
+  | Host
+  | LocalAddress
+  | LocalPort
+  | User
+
+The following server config token expansions are currently supported:
+
+  ===== ===========
+  Token Expansion
+  ===== ===========
+  %%    Literal '%'
+  %u    Username
+  ===== ===========
+
+These expansions are available in the values of the following config options:
+
+  | AuthorizedKeysFile
+
+.. index:: Specifying byte counts
+.. _SpecifyingByteCounts:
+
+Specifying byte counts
+----------------------
+
+A byte count may be passed into AsyncSSH as an integer value, or as a
+string made up of a mix of numbers followed by an optional letter of
+'k', 'm', or 'g', indicating kilobytes, megabytes, or gigabytes,
+respectively. Multiple of these values can be included. For instance,
+'2.5m' means 2.5 megabytes. This could also be expressed as '2m512k'
+or '2560k'.
+
+.. index:: Specifying time intervals
+.. _SpecifyingTimeIntervals:
+
+Specifying time intervals
+-------------------------
+
+A time interval may be passed into AsyncSSH as an integer or float value,
+or as a string made up of a mix of positive or negative numbers and the
+letters 'w', 'd', 'h', 'm', and 's', indicating weeks, days, hours,
+minutes, or seconds, respectively. Multiple of these values can be
+included. For instance, '1w2d3h' means 1 week, 2 days, and 3 hours.
 
 .. index:: Known hosts
 .. _KnownHosts:
@@ -1384,16 +1845,15 @@ Specifying known hosts
 ----------------------
 
 Known hosts may be passed into AsyncSSH via the ``known_hosts`` argument
-to :func:`create_connection`. This can be the name of a file containing
-a list of known hosts, a byte string containing a list of known hosts,
-or an :class:`SSHKnownHosts` object which was previously imported from
-a string by calling :func:`import_known_hosts` or read from a file by
-calling :func:`read_known_hosts`. In all of these cases, the host patterns
-in the list will be compared against the target host, address, and port
-being connected to and the matching trusted host keys, trusted CA keys,
-revoked keys, trusted X.509 certificates, revoked X.509 certificates,
-trusted X.509 subject names, and revoked X.509 subject names will be
-returned.
+to :func:`create_connection`. This can be the name of a file or list of files
+containing known hosts, a byte string containing data in known hosts format,
+or an :class:`SSHKnownHosts` object which was previously imported from a
+string by calling :func:`import_known_hosts` or read from files by calling
+:func:`read_known_hosts`. In all of these cases, the host patterns in the
+list will be compared against the target host, address, and port being
+connected to and the matching trusted host keys, trusted CA keys, revoked
+keys, trusted X.509 certificates, revoked X.509 certificates, trusted
+X.509 subject names, and revoked X.509 subject names will be returned.
 
 Alternately, a function can be passed in as the ``known_hosts`` argument
 that accepts a target host, address, and port and returns lists containing
@@ -1459,10 +1919,11 @@ Authorized keys may be passed into AsyncSSH via the
 on the :class:`SSHServerConnection` from within the :meth:`begin_auth()
 <SSHServer.begin_auth>` method in :class:`SSHServer`.
 
-Authorized keys can be provided as either the name of a file to read
-the keys from or an :class:`SSHAuthorizedKeys` object which was previously
-imported from a string by calling :func:`import_authorized_keys` or read
-from a file by calling :func:`read_authorized_keys`.
+Authorized keys can be provided as either the name of a file or list of
+files to read authorized keys from or an :class:`SSHAuthorizedKeys` object
+which was previously imported from a string by calling
+:func:`import_authorized_keys` or read from files by calling
+:func:`read_authorized_keys`.
 
 An authorized keys file may contain public keys or X.509 certificates
 in OpenSSH format or X.509 certificate subject names. See
@@ -1483,6 +1944,45 @@ read_authorized_keys
 --------------------
 
 .. autofunction:: read_authorized_keys
+
+.. index:: Logging
+.. _Logging:
+
+Logging
+=======
+
+AsyncSSH supports logging through the standard Python `logging` package.
+Logging is done under the logger named `'asyncssh'` as well as a child
+logger named `'asyncssh.sftp'` to allow different log levels to be set
+for SFTP related log messages.
+
+The base AsyncSSH log level can be set using the :func:`set_log_level`
+function and the SFTP log level can be set using the :func:`set_sftp_log_level`
+function. In addition, when either of these loggers is set to level DEBUG,
+AsyncSSH provides fine-grained control over the level of debug logging
+via the :func:`set_debug_level` function.
+
+AsyncSSH also provides logger objects as members of connection, channel,
+stream, and process objects that automatically log additional context about
+the connection or channel the logger is a member of. These objects can
+be used by application code to output custom log information associated
+with a particular connection or channel. Logger objects are also provided
+as members of SFTP client and server objects.
+
+set_log_level
+-------------
+
+.. autofunction:: set_log_level
+
+set_sftp_log_level
+------------------
+
+.. autofunction:: set_sftp_log_level
+
+set_debug_level
+---------------
+
+.. autofunction:: set_debug_level
 
 .. index:: Exceptions
 .. _Exceptions:
@@ -1514,21 +2014,49 @@ DisconnectError
 ---------------
 
 .. autoexception:: DisconnectError
+.. autoexception:: CompressionError
+.. autoexception:: ConnectionLost
+.. autoexception:: HostKeyNotVerifiable
+.. autoexception:: IllegalUserName
+.. autoexception:: KeyExchangeFailed
+.. autoexception:: MACError
+.. autoexception:: PermissionDenied
+.. autoexception:: ProtocolError
+.. autoexception:: ProtocolNotSupported
+.. autoexception:: ServiceNotAvailable
 
 ChannelOpenError
 ----------------
 
 .. autoexception:: ChannelOpenError
 
+ChannelListenError
+------------------
+
+.. autoexception:: ChannelListenError
+
 ProcessError
 ------------
 
 .. autoexception:: ProcessError
 
+TimeoutError
+------------
+
+.. autoexception:: TimeoutError
+
 SFTPError
 ---------
 
 .. autoexception:: SFTPError
+.. autoexception:: SFTPEOFError
+.. autoexception:: SFTPNoSuchFile
+.. autoexception:: SFTPPermissionDenied
+.. autoexception:: SFTPFailure
+.. autoexception:: SFTPBadMessage
+.. autoexception:: SFTPNoConnection
+.. autoexception:: SFTPConnectionLost
+.. autoexception:: SFTPOpUnsupported
 
 KeyImportError
 --------------
@@ -1550,11 +2078,27 @@ KeyGenerationError
 
 .. autoexception:: KeyGenerationError
 
+ConfigParseError
+----------------
+
+.. autoexception:: ConfigParseError
+
 .. index:: Supported algorithms
 .. _SupportedAlgorithms:
 
 Supported Algorithms
 ====================
+
+Algorithms can be specified as either an list of exact algorithm names
+or as a string of comma-separated algorithm names that may optionally
+include wildcards. A '*' in a name matches zero or more characters and
+a '?' matches exactly one character.
+
+When specifying algorithms as a string, it can also be prefixed with '^'
+to insert the matching algorithms in front of the default algorithms of
+that type, a '+' to insert the matching algorithms after the default
+algorithms, or a '-' to return the default algorithms with the matching
+algorithms removed.
 
 .. index:: Key exchange algorithms
 .. _KexAlgs:
@@ -1562,37 +2106,63 @@ Supported Algorithms
 Key exchange algorithms
 -----------------------
 
-The following are the key exchange algorithms currently supported by AsyncSSH:
+The following are the default key exchange algorithms currently supported
+by AsyncSSH:
 
+  | gss-curve25519-sha256
+  | gss-curve448-sha512
+  | gss-nistp521-sha512
+  | gss-nistp384-sha256
+  | gss-nistp256-sha256
+  | gss-1.3.132.0.10-sha256
   | gss-gex-sha256
-  | gss-gex-sha1
-  | gss-group1-sha1
-  | gss-group14-sha1
   | gss-group14-sha256
   | gss-group15-sha512
   | gss-group16-sha512
   | gss-group17-sha512
   | gss-group18-sha512
+  | gss-group14-sha1
   | curve25519-sha256
   | curve25519-sha256\@libssh.org
+  | curve448-sha512
   | ecdh-sha2-nistp521
   | ecdh-sha2-nistp384
   | ecdh-sha2-nistp256
+  | ecdh-sha2-1.3.132.0.10
   | diffie-hellman-group-exchange-sha256
-  | diffie-hellman-group-exchange-sha1
-  | diffie-hellman-group1-sha1
-  | diffie-hellman-group14-sha1
   | diffie-hellman-group14-sha256
   | diffie-hellman-group15-sha512
   | diffie-hellman-group16-sha512
   | diffie-hellman-group17-sha512
   | diffie-hellman-group18-sha512
+  | diffie-hellman-group14-sha256\@ssh.com
+  | diffie-hellman-group14-sha1
+  | rsa2048-sha256
 
-Curve25519 support is only available when the libnacl package and libsodium
-library are installed.
+The following key exchange algorithms are supported by AsyncSSH, but
+disabled by default:
+
+  | gss-gex-sha1
+  | gss-group1-sha1
+  | diffie-hellman-group-exchange-sha224\@ssh.com
+  | diffie-hellman-group-exchange-sha384\@ssh.com
+  | diffie-hellman-group-exchange-sha512\@ssh.com
+  | diffie-hellman-group-exchange-sha1
+  | diffie-hellman-group14-sha224\@ssh.com
+  | diffie-hellman-group15-sha256\@ssh.com
+  | diffie-hellman-group15-sha384\@ssh.com
+  | diffie-hellman-group16-sha384\@ssh.com
+  | diffie-hellman-group16-sha512\@ssh.com
+  | diffie-hellman-group18-sha512\@ssh.com
+  | diffie-hellman-group1-sha1
+  | rsa1024-sha1
 
 GSS authentication support is only available when the gssapi package is
-installed on UNIX or the pypiwin32 package is installed on Windows.
+installed on UNIX or the pywin32 package is installed on Windows.
+
+Curve25519 and Curve448 support is available when OpenSSL 1.1.1 or
+later is installed. Alternately, Curve25519 is available when the
+libnacl package and libsodium library are installed.
 
 .. index:: Encryption algorithms
 .. _EncryptionAlgs:
@@ -1600,26 +2170,32 @@ installed on UNIX or the pypiwin32 package is installed on Windows.
 Encryption algorithms
 ---------------------
 
-The following are the encryption algorithms currently supported by AsyncSSH:
+The following are the default encryption algorithms currently supported
+by AsyncSSH:
 
   | chacha20-poly1305\@openssh.com
+  | aes256-gcm\@openssh.com
+  | aes128-gcm\@openssh.com
   | aes256-ctr
   | aes192-ctr
   | aes128-ctr
-  | aes256-gcm\@openssh.com
-  | aes128-gcm\@openssh.com
+
+The following encryption algorithms are supported by AsyncSSH, but
+disabled by default:
+
   | aes256-cbc
   | aes192-cbc
   | aes128-cbc
   | 3des-cbc
   | blowfish-cbc
   | cast128-cbc
+  | seed-cbc\@ssh.com
   | arcfour256
   | arcfour128
   | arcfour
 
-Chacha20-poly1305 support is only available when the libnacl package and
-libsodium library are installed.
+Chacha20-Poly1305 support is available when either OpenSSL 1.1.1b or later
+or the libnacl package and libsodium library are installed.
 
 .. index:: MAC algorithms
 .. _MACAlgs:
@@ -1627,23 +2203,32 @@ libsodium library are installed.
 MAC algorithms
 --------------
 
-The following are the MAC algorithms currently supported by AsyncSSH:
+The following are the default MAC algorithms currently supported by AsyncSSH:
 
   | umac-64-etm\@openssh.com
   | umac-128-etm\@openssh.com
   | hmac-sha2-256-etm\@openssh.com
   | hmac-sha2-512-etm\@openssh.com
   | hmac-sha1-etm\@openssh.com
-  | hmac-md5-etm\@openssh.com
-  | hmac-sha2-256-96-etm\@openssh.com
-  | hmac-sha2-512-96-etm\@openssh.com
-  | hmac-sha1-96-etm\@openssh.com
-  | hmac-md5-96-etm\@openssh.com
   | umac-64\@openssh.com
   | umac-128\@openssh.com
   | hmac-sha2-256
   | hmac-sha2-512
   | hmac-sha1
+  | hmac-sha256-2\@ssh.com
+  | hmac-sha224\@ssh.com
+  | hmac-sha256\@ssh.com
+  | hmac-sha384\@ssh.com
+  | hmac-sha512\@ssh.com
+
+The following MAC algorithms are supported by AsyncSSH, but disabled
+by default:
+
+  | hmac-md5-etm\@openssh.com
+  | hmac-sha2-256-96-etm\@openssh.com
+  | hmac-sha2-512-96-etm\@openssh.com
+  | hmac-sha1-96-etm\@openssh.com
+  | hmac-md5-96-etm\@openssh.com
   | hmac-md5
   | hmac-sha2-256-96
   | hmac-sha2-512-96
@@ -1658,11 +2243,16 @@ UMAC support is only available when the nettle library is installed.
 Compression algorithms
 ----------------------
 
-The following are the compression algorithms currently supported by AsyncSSH:
+The following are the default compression algorithms currently supported
+by AsyncSSH:
 
   | zlib\@openssh.com
-  | zlib
   | none
+
+The following compression algorithms are supported by AsyncSSH, but disabled
+by default:
+
+  | zlib
 
 .. index:: Signature algorithms
 .. _SignatureAlgs:
@@ -1670,22 +2260,37 @@ The following are the compression algorithms currently supported by AsyncSSH:
 Signature algorithms
 --------------------
 
-The following are the public key signature algorithms currently supported by
-AsyncSSH:
+The following are the default public key signature algorithms currently
+supported by AsyncSSH:
 
+  | x509v3-ssh-ed25519
+  | x509v3-ssh-ed448
   | x509v3-ecdsa-sha2-nistp521
   | x509v3-ecdsa-sha2-nistp384
   | x509v3-ecdsa-sha2-nistp256
+  | x509v3-ecdsa-sha2-1.3.132.0.10
   | x509v3-rsa2048-sha256
   | x509v3-ssh-rsa
-  | x509v3-ssh-dss
+  | sk-ssh-ed25519\@openssh.com
+  | sk-ecdsa-sha2-nistp256\@openssh.com
   | ssh-ed25519
+  | ssh-ed448
   | ecdsa-sha2-nistp521
   | ecdsa-sha2-nistp384
   | ecdsa-sha2-nistp256
+  | ecdsa-sha2-1.3.132.0.10
   | rsa-sha2-256
   | rsa-sha2-512
+  | ssh-rsa-sha224\@ssh.com
+  | ssh-rsa-sha256\@ssh.com
+  | ssh-rsa-sha384\@ssh.com
+  | ssh-rsa-sha512\@ssh.com
   | ssh-rsa
+
+The following public key signature algorithms are supported by AsyncSSH,
+but disabled by default:
+
+  | x509v3-ssh-dss
   | ssh-dss
 
 .. index:: Public key & certificate algorithms
@@ -1694,32 +2299,52 @@ AsyncSSH:
 Public key & certificate algorithms
 -----------------------------------
 
-The following are the public key and certificate algorithms currently
-supported by AsyncSSH:
+The following are the default public key and certificate algorithms
+currently supported by AsyncSSH:
 
+  | x509v3-ssh-ed25519
+  | x509v3-ssh-ed448
   | x509v3-ecdsa-sha2-nistp521
   | x509v3-ecdsa-sha2-nistp384
   | x509v3-ecdsa-sha2-nistp256
+  | x509v3-ecdsa-sha2-1.3.132.0.10
   | x509v3-rsa2048-sha256
   | x509v3-ssh-rsa
-  | x509v3-ssh-dss
+  | sk-ssh-ed25519-cert-v01\@openssh.com
+  | sk-ecdsa-sha2-nistp256-cert-v01\@openssh.com
   | ssh-ed25519-cert-v01\@openssh.com
+  | ssh-ed448-cert-v01\@openssh.com
   | ecdsa-sha2-nistp521-cert-v01\@openssh.com
   | ecdsa-sha2-nistp384-cert-v01\@openssh.com
   | ecdsa-sha2-nistp256-cert-v01\@openssh.com
+  | ecdsa-sha2-1.3.132.0.10-cert-v01\@openssh.com
   | ssh-rsa-cert-v01\@openssh.com
-  | ssh-dss-cert-v01\@openssh.com
+  | sk-ssh-ed25519\@openssh.com
+  | sk-ecdsa-sha2-nistp256\@openssh.com
   | ssh-ed25519
+  | ssh-ed448
   | ecdsa-sha2-nistp521
   | ecdsa-sha2-nistp384
   | ecdsa-sha2-nistp256
+  | ecdsa-sha2-1.3.132.0.10
   | rsa-sha2-256
   | rsa-sha2-512
+  | ssh-rsa-sha224\@ssh.com
+  | ssh-rsa-sha256\@ssh.com
+  | ssh-rsa-sha384\@ssh.com
+  | ssh-rsa-sha512\@ssh.com
   | ssh-rsa
+
+The following public key and certificate algorithms are supported by
+AsyncSSH, but disabled by default:
+
+  | x509v3-ssh-dss
+  | ssh-dss-cert-v01\@openssh.com
   | ssh-dss
 
-Ed25519 support is only available when the libnacl package and libsodium
-library are installed.
+Ed25519 and Ed448 support is available when OpenSSL 1.1.1b or later is
+installed. Alternately, Ed25519 is available when the libnacl package
+and libsodium library are installed.
 
 .. index:: Constants
 .. _Constants:
@@ -1744,7 +2369,7 @@ can be specified as disconnect reason codes:
   | DISC_COMPRESSION_ERROR
   | DISC_SERVICE_NOT_AVAILABLE
   | DISC_PROTOCOL_VERSION_NOT_SUPPORTED
-  | DISC_HOST_KEY_NOT_VERIFYABLE
+  | DISC_HOST_KEY_NOT_VERIFIABLE
   | DISC_CONNECTION_LOST
   | DISC_BY_APPLICATION
   | DISC_TOO_MANY_CONNECTIONS

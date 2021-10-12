@@ -1,11 +1,19 @@
-# Copyright (c) 2014-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2014-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -14,10 +22,10 @@
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.hashes import SHA1
 from cryptography.hazmat.primitives.asymmetric import dsa
 
-from .misc import PyCAKey
+from .misc import PyCAKey, hashes
+
 
 # Short variable names are used here, matching names in the spec
 # pylint: disable=invalid-name
@@ -89,10 +97,11 @@ class DSAPrivateKey(_DSAKey):
 
         return cls(priv_key, params, pub, priv)
 
-    def sign(self, data):
+    def sign(self, data, hash_alg):
         """Sign a block of data"""
 
-        return self.pyca_key.sign(data, SHA1())
+        priv_key = self.pyca_key
+        return priv_key.sign(data, hashes[hash_alg]())
 
 
 class DSAPublicKey(_DSAKey):
@@ -108,11 +117,12 @@ class DSAPublicKey(_DSAKey):
 
         return cls(pub_key, params, pub)
 
-    def verify(self, data, sig):
+    def verify(self, data, sig, hash_alg):
         """Verify the signature on a block of data"""
 
         try:
-            self.pyca_key.verify(sig, data, SHA1())
+            pub_key = self.pyca_key
+            pub_key.verify(sig, data, hashes[hash_alg]())
             return True
         except InvalidSignature:
             return False

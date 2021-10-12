@@ -1,13 +1,21 @@
-#!/usr/bin/env python3.5
+#!/usr/bin/env python3.6
 
-# Copyright (c) 2013-2016 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -16,8 +24,8 @@
 
 AsyncSSH is a Python package which provides an asynchronous client and
 server implementation of the SSHv2 protocol on top of the Python asyncio
-framework. It requires Python 3.4 or later and either the PyCA library or
-the PyCrypto library for some cryptographic functions.
+framework. It requires Python 3.6 or later and the PyCA library for some
+cryptographic functions.
 
 """
 
@@ -39,19 +47,22 @@ setup(name = 'asyncssh',
       author = __author__,
       author_email = __author_email__,
       url = __url__,
-      license = 'Eclipse Public License v1.0',
+      license = 'Eclipse Public License v2.0',
       description = doclines[0],
       long_description = long_description,
       platforms = 'Any',
-      install_requires = ['cryptography >= 1.5'],
+      python_requires = '>= 3.6',
+      install_requires = ['cryptography >= 2.8'],
       extras_require = {
-          'bcrypt':     ['bcrypt >= 3.0.0'],
+          'bcrypt':     ['bcrypt >= 3.1.3'],
+          'fido2':      ['fido2 == 0.9.1'],
           'gssapi':     ['gssapi >= 1.2.0'],
           'libnacl':    ['libnacl >= 1.4.2'],
+          'pkcs11':     ['python-pkcs11 >= 0.7.0'],
           'pyOpenSSL':  ['pyOpenSSL >= 17.0.0'],
-          'pypiwin32':  ['pypiwin32 >= 219']
+          'pywin32':    ['pywin32 >= 227']
       },
-      packages = ['asyncssh', 'asyncssh.crypto', 'asyncssh.crypto.pyca'],
+      packages = ['asyncssh', 'asyncssh.crypto'],
       scripts = [],
       test_suite = 'tests',
       classifiers = [
@@ -61,9 +72,9 @@ setup(name = 'asyncssh',
           'License :: OSI Approved',
           'Operating System :: MacOS :: MacOS X',
           'Operating System :: POSIX',
-          'Programming Language :: Python :: 3.4',
-          'Programming Language :: Python :: 3.5',
           'Programming Language :: Python :: 3.6',
+          'Programming Language :: Python :: 3.7',
+          'Programming Language :: Python :: 3.8',
           'Topic :: Internet',
           'Topic :: Security :: Cryptography',
           'Topic :: Software Development :: Libraries :: Python Modules',

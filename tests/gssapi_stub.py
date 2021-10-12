@@ -1,11 +1,19 @@
-# Copyright (c) 2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2017-2019 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -20,9 +28,7 @@ from .gss_stub import step
 class Name:
     """Stub class for GSS principal name"""
 
-    def __init__(self, base, name_type=None):
-        # pylint: disable=unused-argument
-
+    def __init__(self, base, _name_type=None):
         if 'init_error' in base:
             raise GSSError(99, 99)
 
@@ -112,17 +118,15 @@ class SecurityContext:
         else:
             return token
 
-    def get_signature(self, data):
+    def get_signature(self, _data):
         """Sign a block of data"""
-
-        # pylint: disable=no-self-use,unused-argument
 
         return b'fail' if 'fail' in self._host else 'succeed'
 
-    def verify_signature(self, data, sig):
+    def verify_signature(self, _data, sig):
         """Verify a signature for a block of data"""
 
-        # pylint: disable=no-self-use,unused-argument
+        # pylint: disable=no-self-use
 
         if sig == b'fail':
             raise GSSError(99, 99)

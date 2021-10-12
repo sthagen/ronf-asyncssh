@@ -1,11 +1,19 @@
-# Copyright (c) 2016-2017 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2016-2020 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -22,7 +30,7 @@ import subprocess
 import asyncssh
 from asyncssh.misc import async_context_manager
 
-from .util import AsyncTestCase, run, x509_available
+from .util import AsyncTestCase, all_tasks, current_task, run, x509_available
 
 
 class Server(asyncssh.SSHServer):
@@ -45,45 +53,58 @@ class Server(asyncssh.SSHServer):
 class ServerTestCase(AsyncTestCase):
     """Unit test class which starts an SSH server and agent"""
 
+    _server = None
+    _server_addr = ''
+    _server_port = 0
+    _agent_pid = None
+
+    @classmethod
+    @async_context_manager
+    async def listen(cls, *, server_factory=(), options=None, **kwargs):
+        """Create an SSH server for the tests to use"""
+
+        if server_factory == ():
+            server_factory = Server
+
+        options = asyncssh.SSHServerConnectionOptions(
+            options=options, server_factory=server_factory,
+            gss_host=None, server_host_keys=['skey'])
+
+        return await asyncssh.listen(port=0, family=socket.AF_INET,
+                                     options=options, **kwargs)
+
+    @classmethod
+    @async_context_manager
+    async def listen_reverse(cls, *, options=None, **kwargs):
+        """Create a reverse SSH server for the tests to use"""
+
+        options = asyncssh.SSHClientConnectionOptions(
+            options=options, gss_host=None,
+            known_hosts=(['skey.pub'], [], []))
+
+        return await asyncssh.listen_reverse(port=0, family=socket.AF_INET,
+                                             options=options, **kwargs)
+
+
+    @classmethod
+    async def create_server(cls, server_factory=(), **kwargs):
+        """Create an SSH server for the tests to use"""
+
+        return await cls.listen(server_factory=server_factory, **kwargs)
+
+    @classmethod
+    async def start_server(cls):
+        """Start an SSH server for the tests to use"""
+
+        return NotImplemented # pragma: no cover
+
     # Pylint doesn't like mixed case method names, but this was chosen to
     # match the convention used in the unittest module.
 
     # pylint: disable=invalid-name
 
-    _server = None
-    _server_addr = None
-    _server_port = None
-    _agent_pid = None
-
     @classmethod
-    @asyncio.coroutine
-    def create_server(cls, server_factory=(), *, loop=(),
-                      server_host_keys=(), gss_host=None, **kwargs):
-        """Create an SSH server for the tests to use"""
-
-        if loop is ():
-            loop = cls.loop
-
-        if server_factory is ():
-            server_factory = Server
-
-        if server_host_keys is ():
-            server_host_keys = ['skey']
-
-        return (yield from asyncssh.create_server(
-            server_factory, port=0, family=socket.AF_INET, loop=loop,
-            server_host_keys=server_host_keys, gss_host=gss_host, **kwargs))
-
-    @classmethod
-    @asyncio.coroutine
-    def start_server(cls):
-        """Start an SSH server for the tests to use"""
-
-        return (yield from cls.create_server())
-
-    @classmethod
-    @asyncio.coroutine
-    def asyncSetUpClass(cls):
+    async def asyncSetUpClass(cls):
         """Set up keys, an SSH server, and an SSH agent for the tests to use"""
 
         # pylint: disable=too-many-statements
@@ -110,7 +131,8 @@ class ServerTestCase(AsyncTestCase):
         skey_ecdsa.write_public_key('skey_ecdsa.pub')
 
         skey_cert = skey.generate_host_certificate(skey, 'name',
-                                                   principals=['127.0.0.1'])
+                                                   principals=['127.0.0.1',
+                                                               'localhost'])
         skey_cert.write_certificate('skey-cert.pub')
 
         exp_cert = skey.generate_host_certificate(skey, 'name',
@@ -175,12 +197,13 @@ class ServerTestCase(AsyncTestCase):
             os.chmod(f, 0o600)
 
         os.mkdir('.ssh', 0o700)
-        os.mkdir('.ssh/crt', 0o700)
+        os.mkdir(os.path.join('.ssh', 'crt'), 0o700)
 
         shutil.copy('ckey_ecdsa', os.path.join('.ssh', 'id_ecdsa'))
         shutil.copy('ckey_ecdsa.pub', os.path.join('.ssh', 'id_ecdsa.pub'))
         shutil.copy('ckey_encrypted', os.path.join('.ssh', 'id_rsa'))
         shutil.copy('ckey.pub', os.path.join('.ssh', 'id_rsa.pub'))
+        shutil.copy('ckey-cert.pub', os.path.join('.ssh', 'id_rsa-cert.pub'))
 
         with open('authorized_keys', 'w') as auth_keys:
             with open('ckey.pub') as ckey_pub:
@@ -205,13 +228,20 @@ class ServerTestCase(AsyncTestCase):
                 with open('root_ca_cert.pub') as root_pub:
                     shutil.copyfileobj(root_pub, auth_keys_x509)
 
-        cls._server = yield from cls.start_server()
+            shutil.copy('skey_x509_self.pem',
+                        os.path.join('.ssh', 'ca-bundle.crt'))
+
+        os.environ['LOGNAME'] = 'guest'
+        os.environ['HOME'] = '.'
+        os.environ['USERPROFILE'] = '.'
+
+        cls._server = await cls.start_server()
 
         sock = cls._server.sockets[0]
         cls._server_addr = '127.0.0.1'
         cls._server_port = sock.getsockname()[1]
 
-        host = '[%s]:%s ' % (cls._server_addr, cls._server_port)
+        host = '[%s]:%d,localhost ' % (cls._server_addr, cls._server_port)
 
         with open('known_hosts', 'w') as known_hosts:
             known_hosts.write(host)
@@ -219,15 +249,12 @@ class ServerTestCase(AsyncTestCase):
             with open('skey.pub') as skey_pub:
                 shutil.copyfileobj(skey_pub, known_hosts)
 
-            known_hosts.write('@cert-authority ' + host)
+            known_hosts.write('@cert-authority * ')
 
             with open('skey.pub') as skey_pub:
                 shutil.copyfileobj(skey_pub, known_hosts)
 
         shutil.copy('known_hosts', os.path.join('.ssh', 'known_hosts'))
-
-        os.environ['LOGNAME'] = 'guest'
-        os.environ['HOME'] = '.'
 
         if 'DISPLAY' in os.environ: # pragma: no cover
             del os.environ['DISPLAY']
@@ -247,20 +274,23 @@ class ServerTestCase(AsyncTestCase):
 
             os.environ['SSH_AUTH_SOCK'] = 'agent'
 
-            agent = yield from asyncssh.connect_agent()
-            yield from agent.add_keys([ckey_ecdsa, (ckey, ckey_cert)])
-            agent.close()
+            async with asyncssh.connect_agent() as agent:
+                await agent.add_keys([ckey_ecdsa, (ckey, ckey_cert)])
+
+        with open('ssh-keysign', 'wb'):
+            pass
 
     @classmethod
-    @asyncio.coroutine
-    def asyncTearDownClass(cls):
+    async def asyncTearDownClass(cls):
         """Shut down test server and agent"""
 
-        # Wait a bit for existing tasks to exit
-        yield from asyncio.sleep(1)
+        tasks = all_tasks()
+        tasks.remove(current_task())
+
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         cls._server.close()
-        yield from cls._server.wait_closed()
+        await cls._server.wait_closed()
 
         if cls._agent_pid: # pragma: no branch
             os.kill(cls._agent_pid, signal.SIGTERM)
@@ -272,25 +302,32 @@ class ServerTestCase(AsyncTestCase):
 
         return bool(self._agent_pid)
 
-    @asyncio.coroutine
-    def create_connection(self, client_factory, loop=(),
-                          gss_host=None, **kwargs):
-        """Create a connection to the test server"""
-
-        if loop is ():
-            loop = self.loop
-
-        return (yield from asyncssh.create_connection(client_factory,
-                                                      self._server_addr,
-                                                      self._server_port,
-                                                      loop=loop,
-                                                      gss_host=gss_host,
-                                                      **kwargs))
-
     @async_context_manager
-    def connect(self, **kwargs):
+    async def connect(self, host=(), port=(), gss_host=None,
+                      options=None, **kwargs):
         """Open a connection to the test server"""
 
-        conn, _ = yield from self.create_connection(None, **kwargs)
+        return await asyncssh.connect(host or self._server_addr,
+                                      port or self._server_port,
+                                      gss_host=gss_host, options=options,
+                                      **kwargs)
 
-        return conn
+    @async_context_manager
+    async def connect_reverse(self, options=None, gss_host=None, **kwargs):
+        """Create a connection to the test server"""
+
+        options = asyncssh.SSHServerConnectionOptions(options,
+                                                      server_factory=Server,
+                                                      server_host_keys=['skey'],
+                                                      gss_host=gss_host)
+
+        return await asyncssh.connect_reverse(self._server_addr,
+                                              self._server_port,
+                                              options=options, **kwargs)
+
+    async def create_connection(self, client_factory, **kwargs):
+        """Create a connection to the test server"""
+
+        conn = await self.connect(client_factory=client_factory, **kwargs)
+
+        return conn, conn.get_owner()

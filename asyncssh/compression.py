@@ -1,11 +1,19 @@
-# Copyright (c) 2013-2015 by Ron Frederick <ronf@timeheart.net>.
-# All rights reserved.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
-# the terms of the Eclipse Public License v1.0 which accompanies this
+# the terms of the Eclipse Public License v2.0 which accompanies this
 # distribution and is available at:
 #
-#     http://www.eclipse.org/legal/epl-v10.html
+#     http://www.eclipse.org/legal/epl-2.0/
+#
+# This program may also be made available under the following secondary
+# licenses when the conditions for such availability set forth in the
+# Eclipse Public License v2.0 are satisfied:
+#
+#    GNU General Public License, Version 2.0, or any later versions of
+#    that license
+#
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 #
 # Contributors:
 #     Ron Frederick - initial implementation, API, and documentation
@@ -16,7 +24,10 @@ import zlib
 
 
 _cmp_algs = []
+_default_cmp_algs = []
+
 _cmp_params = {}
+
 _cmp_compressors = {}
 _cmp_decompressors = {}
 
@@ -28,7 +39,7 @@ def _none():
 
 
 class _ZLibCompress:
-    """Wrapper class to force a sync flush when compressing"""
+    """Wrapper class to force a sync flush and handle exceptions"""
 
     def __init__(self):
         self._comp = zlib.compressobj()
@@ -36,22 +47,53 @@ class _ZLibCompress:
     def compress(self, data):
         """Compress data using zlib compression with sync flush"""
 
-        return self._comp.compress(data) + self._comp.flush(zlib.Z_SYNC_FLUSH)
+        try:
+            return self._comp.compress(data) + \
+                   self._comp.flush(zlib.Z_SYNC_FLUSH)
+        except zlib.error: # pragma: no cover
+            return None
 
 
-def register_compression_alg(alg, compressor, decompressor, after_auth):
+class _ZLibDecompress:
+    """Wrapper class to handle exceptions"""
+
+    def __init__(self):
+        self._decomp = zlib.decompressobj()
+
+    def decompress(self, data):
+        """Decompress data using zlib compression"""
+
+        try:
+            return self._decomp.decompress(data)
+        except zlib.error: # pragma: no cover
+            return None
+
+
+def register_compression_alg(alg, compressor, decompressor,
+                             after_auth, default):
     """Register a compression algorithm"""
 
     _cmp_algs.append(alg)
+
+    if default:
+        _default_cmp_algs.append(alg)
+
     _cmp_params[alg] = after_auth
+
     _cmp_compressors[alg] = compressor
     _cmp_decompressors[alg] = decompressor
 
 
 def get_compression_algs():
-    """Return a list of available compression algorithms"""
+    """Return supported compression algorithms"""
 
     return _cmp_algs
+
+
+def get_default_compression_algs():
+    """Return default compression algorithms"""
+
+    return _default_cmp_algs
 
 
 def get_compression_params(alg):
@@ -84,11 +126,9 @@ def get_decompressor(alg):
 
     return _cmp_decompressors[alg]()
 
-# pylint: disable=bad-whitespace
-
 register_compression_alg(b'zlib@openssh.com',
-                         _ZLibCompress, zlib.decompressobj, True)
+                         _ZLibCompress, _ZLibDecompress, True,  True)
 register_compression_alg(b'zlib',
-                         _ZLibCompress, zlib.decompressobj, False)
+                         _ZLibCompress, _ZLibDecompress, False, False)
 register_compression_alg(b'none',
-                         _none,         _none,              False)
+                         _none,         _none,           False, True)
