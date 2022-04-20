@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -20,15 +20,18 @@
 
 """Miscellaneous utility classes and functions"""
 
-import codecs
 import functools
 import ipaddress
 import re
 import socket
 
-from collections import OrderedDict
-from pathlib import Path
+from pathlib import Path, PurePath
 from random import SystemRandom
+from types import TracebackType
+from typing import Any, AsyncContextManager, Awaitable, Callable, Dict
+from typing import Generator, Generic, IO, Mapping, Optional, Sequence
+from typing import Tuple, Type, TypeVar, Union, cast, overload
+from typing_extensions import Literal, Protocol
 
 from .constants import DEFAULT_LANG
 from .constants import DISC_COMPRESSION_ERROR, DISC_CONNECTION_LOST
@@ -37,6 +40,60 @@ from .constants import DISC_KEY_EXCHANGE_FAILED, DISC_MAC_ERROR
 from .constants import DISC_NO_MORE_AUTH_METHODS_AVAILABLE
 from .constants import DISC_PROTOCOL_ERROR, DISC_PROTOCOL_VERSION_NOT_SUPPORTED
 from .constants import DISC_SERVICE_NOT_AVAILABLE
+
+
+class _Hash(Protocol):
+    """Protocol for hashing data"""
+
+    @property
+    def digest_size(self) -> int:
+        """Return the hash digest size"""
+
+    @property
+    def block_size(self) -> int:
+        """Return the hash block size"""
+
+    @property
+    def name(self) -> str:
+        """Return the hash name"""
+
+    def digest(self) -> bytes:
+        """Return the digest value as a bytes object"""
+
+    def hexdigest(self) -> str:
+        """Return the digest value as a string of hexadecimal digits"""
+
+    def update(self, __data: bytes) -> None:
+        """Update this hash object's state with the provided bytes"""
+
+
+class HashType(Protocol):
+    """Protocol for returning the type of a hash function"""
+
+    def __call__(self, __data: bytes = ...) -> _Hash:
+        """Create a new hash object"""
+
+
+class _SupportsWaitClosed(Protocol):
+    """A class that supports async wait_closed"""
+
+    async def wait_closed(self) -> None:
+        """Wait for transport to close"""
+
+
+_T = TypeVar('_T')
+DefTuple = Union[Tuple[()], _T]
+MaybeAwait = Union[_T, Awaitable[_T]]
+
+ExcInfo = Tuple[Type[BaseException], BaseException, TracebackType]
+OptExcInfo = Union[ExcInfo, Tuple[None, None, None]]
+
+BytesOrStr = Union[bytes, str]
+FilePath = Union[str, PurePath]
+HostPort = Tuple[str, int]
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
+SockAddr = Union[Tuple[str, int], Tuple[str, int, int, int]]
 
 
 # Define a version of randrange which is based on SystemRandom(), so that
@@ -50,32 +107,27 @@ _time_units = {'': 1, 's': 1, 'm': 60, 'h': 60*60,
                'd': 24*60*60, 'w': 7*24*60*60}
 
 
-def hide_empty(value, prefix=', '):
+def hide_empty(value: object, prefix: str = ', ') -> str:
     """Return a string with optional prefix if value is non-empty"""
 
     value = str(value)
     return prefix + value if value else ''
 
 
-def plural(length, label, suffix='s'):
+def plural(length: int, label: str, suffix: str = 's') -> str:
     """Return a label with an optional plural suffix"""
 
     return '%d %s%s' % (length, label, suffix if length != 1 else '')
 
 
-def to_hex(data):
-    """Convert binary data to a hex string"""
-
-    return codecs.encode(data, 'hex')
-
-
-def all_ints(seq):
+def all_ints(seq: Sequence[object]) -> bool:
     """Return if a sequence contains all integers"""
 
     return all(isinstance(i, int) for i in seq)
 
 
-def get_symbol_names(symbols, prefix, strip_leading=0):
+def get_symbol_names(symbols: Mapping[str, int], prefix: str,
+                     strip_leading: int = 0) -> Mapping[int, str]:
     """Return a mapping from values to symbol names for logging"""
 
     return {value: name[strip_leading:] for name, value in symbols.items()
@@ -85,7 +137,7 @@ def get_symbol_names(symbols, prefix, strip_leading=0):
 # Punctuation to map when creating handler names
 _HANDLER_PUNCTUATION = (('@', '_at_'), ('.', '_dot_'), ('-', '_'))
 
-def map_handler_name(name):
+def map_handler_name(name: str) -> str:
     """Map punctuation so a string can be used as a handler name"""
 
     for old, new in _HANDLER_PUNCTUATION:
@@ -94,7 +146,7 @@ def map_handler_name(name):
     return name
 
 
-def _normalize_scoped_ip(addr):
+def _normalize_scoped_ip(addr: str) -> str:
     """Normalize scoped IP address
 
        The ipaddress module doesn't handle scoped addresses properly,
@@ -121,18 +173,19 @@ def _normalize_scoped_ip(addr):
         ip = ipaddress.ip_address(addr)
 
         if ip.is_link_local:
-            addr = str(ipaddress.ip_address(int(ip) | (sa[3] << 96)))
+            scope_id = cast(Tuple[str, int, int, int], sa)[3]
+            addr = str(ipaddress.ip_address(int(ip) | (scope_id << 96)))
 
     return addr
 
 
-def ip_address(addr):
+def ip_address(addr: str) -> IPAddress:
     """Wrapper for ipaddress.ip_address which supports scoped addresses"""
 
     return ipaddress.ip_address(_normalize_scoped_ip(addr))
 
 
-def ip_network(addr):
+def ip_network(addr: str) -> IPNetwork:
     """Wrapper for ipaddress.ip_network which supports scoped addresses"""
 
     idx = addr.find('/')
@@ -144,27 +197,39 @@ def ip_network(addr):
     return ipaddress.ip_network(_normalize_scoped_ip(addr) + mask)
 
 
-def open_file(filename, *args, **kwargs):
+def open_file(filename: FilePath, mode: str, buffering: int = -1) -> IO[bytes]:
     """Open a file with home directory expansion"""
 
-    return open(Path(filename).expanduser(), *args, **kwargs)
+    return open(Path(filename).expanduser(), mode, buffering=buffering)
 
 
-def read_file(filename, mode='rb'):
+@overload
+def read_file(filename: FilePath) -> bytes:
+    """Read from a binary file with home directory expansion"""
+
+@overload
+def read_file(filename: FilePath, mode: Literal['rb']) -> bytes:
+    """Read from a binary file with home directory expansion"""
+
+@overload
+def read_file(filename: FilePath, mode: Literal['r']) -> str:
+    """Read from a text file with home directory expansion"""
+
+def read_file(filename, mode = 'rb'):
     """Read from a file with home directory expansion"""
 
     with open_file(filename, mode) as f:
         return f.read()
 
 
-def write_file(filename, data, mode='wb'):
+def write_file(filename: FilePath, data: bytes, mode: str = 'wb') -> int:
     """Write or append to a file with home directory expansion"""
 
     with open_file(filename, mode) as f:
         return f.write(data)
 
 
-def _parse_units(value, suffixes, label):
+def _parse_units(value: str, suffixes: Mapping[str, int], label: str) -> float:
     """Parse a series of integers followed by unit suffixes"""
 
     matches = _unit_pattern.split(value)
@@ -181,19 +246,52 @@ def _parse_units(value, suffixes, label):
         raise ValueError('Invalid ' + label) from None
 
 
-def parse_byte_count(value):
+def parse_byte_count(value: str) -> int:
     """Parse a byte count with optional k, m, or g suffixes"""
 
-    return _parse_units(value, _byte_units, 'byte count')
+    return int(_parse_units(value, _byte_units, 'byte count'))
 
 
-def parse_time_interval(value):
+def parse_time_interval(value: str) -> float:
     """Parse a time interval with optional s, m, h, d, or w suffixes"""
 
     return _parse_units(value, _time_units, 'time interval')
 
 
-def async_context_manager(coro):
+_ACM = TypeVar('_ACM', bound=AsyncContextManager, covariant=True)
+
+class _ACMWrapper(Generic[_ACM]):
+    """Async context manager wrapper"""
+
+    def __init__(self, coro: Awaitable[_ACM]):
+        self._coro = coro
+        self._coro_result: Optional[_ACM] = None
+
+    def __await__(self) -> Generator[Any, None, _ACM]:
+        return self._coro.__await__()
+
+    async def __aenter__(self) -> _ACM:
+        self._coro_result = await self._coro
+
+        return await self._coro_result.__aenter__()
+
+    async def __aexit__(self, exc_type: Optional[Type[BaseException]],
+                        exc_value: Optional[BaseException],
+                        traceback: Optional[TracebackType]) -> Optional[bool]:
+        assert self._coro_result is not None
+
+        exit_result = await self._coro_result.__aexit__(
+            exc_type, exc_value, traceback)
+
+        self._coro_result = None
+
+        return exit_result
+
+
+_ACMCoro = Callable[..., Awaitable[_ACM]]
+_ACMWrapperFunc = Callable[..., _ACMWrapper[_ACM]]
+
+def async_context_manager(coro: _ACMCoro[_ACM]) -> _ACMWrapperFunc[_ACM]:
     """Decorator for functions returning asynchronous context managers
 
        This decorator can be used on functions which return objects
@@ -206,34 +304,16 @@ def async_context_manager(coro):
 
     """
 
-    class AsyncContextManager:
-        """Async context manager wrapper"""
-
-        def __init__(self, coro):
-            self._coro = coro
-            self._result = None
-
-        def __await__(self):
-            return self._coro.__await__()
-
-        async def __aenter__(self):
-            self._result = await self._coro
-            return await self._result.__aenter__()
-
-        async def __aexit__(self, *exc_info):
-            await self._result.__aexit__(*exc_info)
-            self._result = None
-
     @functools.wraps(coro)
-    def context_wrapper(*args, **kwargs):
+    def context_wrapper(*args, **kwargs) -> _ACMWrapper[_ACM]:
         """Return an async context manager wrapper for this coroutine"""
 
-        return AsyncContextManager(coro(*args, **kwargs))
+        return _ACMWrapper(coro(*args, **kwargs))
 
     return context_wrapper
 
 
-async def maybe_wait_closed(writer):
+async def maybe_wait_closed(writer: '_SupportsWaitClosed') -> None:
     """Wait for a StreamWriter to close, if Python version supports it
 
        Python 3.8 triggers a false error report about garbage collecting
@@ -254,7 +334,9 @@ async def maybe_wait_closed(writer):
 class Options:
     """Container for configuration options"""
 
-    def __init__(self, options=None, **kwargs):
+    kwargs: Dict[str, object]
+
+    def __init__(self, options: Optional['Options'] = None, **kwargs: object):
         if options:
             if not isinstance(options, type(self)):
                 raise TypeError('Invalid %s, got %s' %
@@ -267,22 +349,38 @@ class Options:
         self.kwargs.update(kwargs)
         self.prepare(**self.kwargs)
 
-    def prepare(self):
+    def prepare(self, **kwargs: object) -> None:
         """Pre-process configuration options"""
 
-    def update(self, kwargs):
+    def update(self, kwargs: Dict[str, object]) -> None:
         """Update options based on keyword parameters passed in"""
 
         self.kwargs.update(kwargs)
         self.prepare(**self.kwargs)
 
 
-class Record:
-    """General-purpose record type with fixed set of fields"""
+class _RecordMeta(type):
+    """Metaclass for general-purpose record type"""
 
-    __slots__ = OrderedDict()
+    def __new__(mcs: Type['_RecordMeta'], name: str, bases: Tuple[type, ...],
+                ns: Dict[str, object]) -> '_RecordMeta':
+        if name != 'Record':
+            fields = cast(Mapping[str, str],
+                          ns.get('__annotations__', {})).keys()
+            defaults = {k: ns.get(k) for k in fields}
 
-    def __init__(self, *args, **kwargs):
+            ns = {k: v for k, v in ns.items() if k not in fields}
+            ns['__slots__'] = defaults
+
+        return cast(_RecordMeta, super().__new__(mcs, name, bases, ns))
+
+
+class Record(metaclass=_RecordMeta):
+    """Generic Record class"""
+
+    __slots__: Mapping[str, object] = {}
+
+    def __init__(self, *args: object, **kwargs: object):
         for k, v in self.__slots__.items():
             setattr(self, k, v)
 
@@ -292,30 +390,28 @@ class Record:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '%s(%s)' % (type(self).__name__,
                            ', '.join('%s=%r' % (k, getattr(self, k))
                                      for k in self.__slots__))
 
-    def __str__(self):
+    def __str__(self) -> str:
         values = ((k, self._format(k, getattr(self, k)))
                   for k in self.__slots__)
 
         return ', '.join('%s: %s' % (k, v) for k, v in values if v is not None)
 
-    def _format(self, k, v):
+    def _format(self, k: str, v: object) -> Optional[str]:
         """Format a field as a string"""
 
         # pylint: disable=no-self-use,unused-argument
 
         return str(v)
 
-
 class Error(Exception):
     """General SSH error"""
 
-    def __init__(self, code, reason, lang=DEFAULT_LANG):
-
+    def __init__(self, code: int, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(reason)
         self.code = code
         self.reason = reason
@@ -360,7 +456,7 @@ class CompressionError(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_COMPRESSION_ERROR, reason, lang)
 
 
@@ -381,7 +477,7 @@ class ConnectionLost(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_CONNECTION_LOST, reason, lang)
 
 
@@ -400,7 +496,7 @@ class HostKeyNotVerifiable(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_HOST_KEY_NOT_VERIFIABLE, reason, lang)
 
 
@@ -419,7 +515,7 @@ class IllegalUserName(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_ILLEGAL_USER_NAME, reason, lang)
 
 
@@ -437,7 +533,7 @@ class KeyExchangeFailed(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_KEY_EXCHANGE_FAILED, reason, lang)
 
 
@@ -457,7 +553,7 @@ class MACError(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_MAC_ERROR, reason, lang)
 
 
@@ -476,7 +572,7 @@ class PermissionDenied(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_NO_MORE_AUTH_METHODS_AVAILABLE, reason, lang)
 
 
@@ -495,7 +591,7 @@ class ProtocolError(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_PROTOCOL_ERROR, reason, lang)
 
 
@@ -514,7 +610,7 @@ class ProtocolNotSupported(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_PROTOCOL_ERROR, reason, lang)
 
 
@@ -533,7 +629,7 @@ class ServiceNotAvailable(DisconnectError):
 
     """
 
-    def __init__(self, reason, lang=DEFAULT_LANG):
+    def __init__(self, reason: str, lang: str = DEFAULT_LANG):
         super().__init__(DISC_SERVICE_NOT_AVAILABLE, reason, lang)
 
 
@@ -587,7 +683,7 @@ class PasswordChangeRequired(Exception):
 
     """
 
-    def __init__(self, prompt, lang=DEFAULT_LANG):
+    def __init__(self, prompt: str, lang: str = DEFAULT_LANG):
         super().__init__('Password change required: %s' % prompt)
         self.prompt = prompt
         self.lang = lang
@@ -605,7 +701,7 @@ class BreakReceived(Exception):
 
     """
 
-    def __init__(self, msec):
+    def __init__(self, msec: int):
         super().__init__('Break for %s msec' % msec)
         self.msec = msec
 
@@ -622,7 +718,7 @@ class SignalReceived(Exception):
 
     """
 
-    def __init__(self, signal):
+    def __init__(self, signal: str):
         super().__init__('Signal: %s' % signal)
         self.signal = signal
 
@@ -635,7 +731,7 @@ class SoftEOFReceived(Exception):
 
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__('Soft EOF')
 
 
@@ -660,7 +756,7 @@ class TerminalSizeChanged(Exception):
 
     """
 
-    def __init__(self, width, height, pixwidth, pixheight):
+    def __init__(self, width: int, height: int, pixwidth: int, pixheight: int):
         super().__init__('Terminal size change: (%s, %s, %s, %s)' %
                          (width, height, pixwidth, pixheight))
         self.width = width
@@ -683,7 +779,7 @@ _disc_error_map = {
 }
 
 
-def construct_disc_error(code, reason, lang):
+def construct_disc_error(code: int, reason: str, lang: str) -> DisconnectError:
     """Map disconnect error code to appropriate DisconnectError exception"""
 
     try:

@@ -3,6 +3,125 @@
 Change Log
 ==========
 
+Release 2.10.1 (16 Apr 2022)
+----------------------------
+
+* Added support for "Match Exec" in config files and updated AsyncSSH
+  API calls to do config parsing in an executor to avoid blocking the
+  event loop if a "Match Exec" command doesn't return immediately.
+
+* Fixed an issue where settings associated with server channels set
+  when creating a listener rather than at the time a new channel is
+  opened were not always being applied correctly.
+
+* Fixed config file handling to be more consistent with OpenSSH, making
+  all relative paths be evaluated relative to ~/.ssh and allowing
+  references to config file patterns which don't match anything to only
+  trigger a debug message rather than an error. Thanks go to Caleb Ho
+  for reporting this issue!
+
+* Update minimum required version of cryprography package to 3.1, to
+  allow calls to it to be made without passing in a "backend" argument.
+  This was missed back in the 2.9 release. Thanks go to Github users
+  sebby97 and JavaScriptDude for reporting this issue!
+
+Release 2.10.0 (26 Mar 2022)
+----------------------------
+
+* Added new get_server_auth_methods() function which returns the set
+  of auth methods available for a given user and SSH server.
+
+* Added support for new line_echo argument when creating a server
+  channel which controls whether input in the line editor is echoed
+  to the output immediately or under the control of the application,
+  allowing more control over the ordering of input and output.
+
+* Added explicit support for RSA SHA-2 certificate algorithms.
+  Previously, SHA-2 signatures were supported using the original
+  ssh-rsa-cert-v01@openssh.com algorithm name, but recent versions
+  of SSH now disable this algorithm by default, so the new SHA-2
+  algorithm names need to be advertised for SHA-2 signatures to
+  work when using OpenSSH certificates.
+
+* Improved handling of config file loading when options argument is
+  used, allowing config loading to be overridden at connect() time
+  even if the options passed in referenced a config file.
+
+* Improved speed of unit tests by avoiding some network timeouts
+  when connecting to invalid addresses.
+
+* Merged GitHub workflows contributed by GitHub user hexchain to
+  run unit tests and collect code coverage information on multiple
+  platforms and Python versions. Thanks so much for this work!
+
+* Fixed issue with GSS auth unit tests hanging on Windows.
+
+* Fixed issue with known_hosts matching when ProxyJump is being used.
+  Thanks go to GitHub user velavokr for reporting this and helping
+  to debug it.
+
+* Fixed type annotations for SFTP client and server open methods.
+  Thanks go to Marat Sharafutdinov for reporting this!
+
+Release 2.9.0 (23 Jan 2022)
+---------------------------
+
+* Added mypy-compatible type annotations to all AsyncSSH modules, and a
+  "py.typed" file to signal that annotations are now available for this
+  package.
+
+* Added experimental support for SFTP versions 4-6. While AsyncSSH still
+  defaults to only advertising version 3 when acting as both a client and
+  a server, applications can explicitly enable support for later versions,
+  which will be used if both ends of the connection agree. Not all features
+  are fully supported, but a number of useful enhancements are now
+  available, including as users and groups specified by name, higher
+  resolution timestamps, and more granular error reporting.
+
+* Updated documentation to make it clear that keys from a PKCS11 provider
+  or ssh-agent will be used even when client_keys is specified, unless
+  those sources are explicitly disabled.
+
+* Improved handling of task cancellation in AsyncSSH to avoid triggering
+  an error of "Future exception was never retrieved". Thanks go to Krzysztof
+  Kotlenga for reporting this issue and providing test code to reliably
+  reproduce it.
+
+* Changed implementation of OpenSSH keepalive handler to improve
+  interoperability with servers which don't expect a "success" response
+  when this message is sent.
+
+Release 2.8.1 (8 Nov 2021)
+--------------------------
+
+* Fixed a regression in handling of the passphrase argument used to
+  decrypt private keys.
+
+Release 2.8.0 (3 Nov 2021)
+--------------------------
+
+* Added new connect_timeout option to set a timeout which includes the
+  time taken to open an outbound TCP connection, allowing connections
+  to be aborted without waiting for the default socket connect timeout.
+  The existing login_timeout option only applies after the TCP connection
+  was established, so it could not be used for this. The support for the
+  ConnectTimeout config file option has also been updated to use this new
+  capability, making it more consistent with OpenSSH's behavior.
+
+* Added the ability to use the passphrase argument specified in a connect
+  call to be used to decrypt keys used to connect to bastion hosts.
+  Previously, this argument was only applied when making a connection
+  to the main host and encrypted keys could only be used when they
+  were loaded separately.
+
+* Updated AsyncSSH's "Record" class to make it more IDE-friendly when
+  it comes to things like auto-completion. This class is used as a base
+  class for SSHCompletedProcess and various SFTP attribute classes.
+  Thanks go to Github user zentarim for suggesting this improvement.
+
+* Fixed a potential uncaught exception when handling forwarded connections
+  which are immediately closed by a peer.
+
 Release 2.7.2 (15 Sep 2021)
 ---------------------------
 

@@ -160,6 +160,11 @@ get_server_host_key
 
 .. autofunction:: get_server_host_key
 
+get_server_auth_methods
+-----------------------
+
+.. autofunction:: get_server_auth_methods
+
 scp
 ---
 
@@ -294,11 +299,11 @@ SSHClientConnection
 
 .. autoclass:: SSHClientConnection()
 
-   ========================= =
+   ======================================================================= =
    Connection attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   ======================================================================= =
 
    =================================== =
    General connection methods
@@ -364,11 +369,11 @@ SSHServerConnection
 
 .. autoclass:: SSHServerConnection()
 
-   ========================= =
+   ======================================================================= =
    Connection attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   ======================================================================= =
 
    ============================== =
    General connection methods
@@ -441,9 +446,9 @@ SSHClientProcess
 
 .. autoclass:: SSHClientProcess
 
-   ============================== =
+   ======================================================================= =
    Client process attributes
-   ============================== =
+   ======================================================================= =
    .. autoattribute:: channel
    .. autoattribute:: logger
    .. autoattribute:: env
@@ -455,7 +460,7 @@ SSHClientProcess
    .. autoattribute:: exit_status
    .. autoattribute:: exit_signal
    .. autoattribute:: returncode
-   ============================== =
+   ======================================================================= =
 
    ==================================== =
    Other client process methods
@@ -470,15 +475,15 @@ SSHClientProcess
    .. automethod:: send_signal
    ==================================== =
 
-   ============================ =
+   ======================================================================= =
    Client process close methods
-   ============================ =
+   ======================================================================= =
    .. automethod:: terminate
    .. automethod:: kill
    .. automethod:: close
    .. automethod:: is_closing
    .. automethod:: wait_closed
-   ============================ =
+   ======================================================================= =
 
 SSHServerProcess
 ----------------
@@ -534,18 +539,18 @@ SSHSubprocessReadPipe
    .. automethod:: get_extra_info
    ==================================== =
 
-   ============================== =
+   ======================================================================= =
    Subprocess pipe read methods
-   ============================== =
+   ======================================================================= =
    .. automethod:: pause_reading
    .. automethod:: resume_reading
-   ============================== =
+   ======================================================================= =
 
-   ===================================== =
+   ======================================================================= =
    General subprocess pipe close methods
-   ===================================== =
+   ======================================================================= =
    .. automethod:: close
-   ===================================== =
+   ======================================================================= =
 
 SSHSubprocessWritePipe
 ----------------------
@@ -558,23 +563,23 @@ SSHSubprocessWritePipe
    .. automethod:: get_extra_info
    ==================================== =
 
-   ======================================= =
+   ======================================================================= =
    Subprocess pipe write methods
-   ======================================= =
+   ======================================================================= =
    .. automethod:: can_write_eof
    .. automethod:: get_write_buffer_size
    .. automethod:: set_write_buffer_limits
    .. automethod:: write
    .. automethod:: writelines
    .. automethod:: write_eof
-   ======================================= =
+   ======================================================================= =
 
-   ===================================== =
+   ======================================================================= =
    General subprocess pipe close methods
-   ===================================== =
+   ======================================================================= =
    .. automethod:: abort
    .. automethod:: close
-   ===================================== =
+   ======================================================================= =
 
 SSHSubprocessProtocol
 ---------------------
@@ -617,15 +622,15 @@ SSHSubprocessTransport
    .. automethod:: send_signal
    ==================================== =
 
-   ================================== =
+   ======================================================================= =
    Subprocess transport close methods
-   ================================== =
+   ======================================================================= =
    .. automethod:: terminate
    .. automethod:: kill
    .. automethod:: close
    .. automethod:: is_closing
    .. automethod:: wait_closed
-   ================================== =
+   ======================================================================= =
 
 Session Classes
 ===============
@@ -832,11 +837,11 @@ SSHServerChannel
 
 .. autoclass:: SSHServerChannel()
 
-   ========================= =
+   ======================================================================= =
    Channel attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   ======================================================================= =
 
    =============================== =
    General channel info methods
@@ -915,11 +920,11 @@ SSHTCPChannel
 
 .. autoclass:: SSHTCPChannel()
 
-   ========================= =
+   ======================================================================= =
    Channel attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   ======================================================================= =
 
    ============================== =
    General channel info methods
@@ -960,11 +965,11 @@ SSHUNIXChannel
 
 .. autoclass:: SSHUNIXChannel()
 
-   ========================= =
+   ======================================================================= =
    Channel attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   ======================================================================= =
 
    ============================== =
    General channel info methods
@@ -1071,11 +1076,12 @@ SFTPClient
 
 .. autoclass:: SFTPClient()
 
-   ========================= =
+   ======================================================================= =
    SFTP client attributes
-   ========================= =
+   ======================================================================= =
    .. autoattribute:: logger
-   ========================= =
+   .. autoattribute:: version
+   ======================================================================= =
 
    ===================== =
    File transfer methods
@@ -1088,10 +1094,11 @@ SFTPClient
    .. automethod:: mcopy
    ===================== =
 
-   ============================================================================================================================== =
+   ============================================================================================================================================================================================================================== =
    File access methods
-   ============================================================================================================================== =
-   .. automethod:: open(path, mode='r', attrs=SFTPAttrs(), encoding='utf-8', errors='strict', block_size=16384, max_requests=128)
+   ============================================================================================================================================================================================================================== =
+   .. automethod:: open(path, mode='r', attrs=SFTPAttrs(), encoding='utf-8', errors='strict', block_size=SFTP_BLOCK_SIZE, max_requests=_MAX_SFTP_REQUESTS)
+   .. automethod:: open56(path, desired_access=ACE4_READ_DATA | ACE4_READ_ATTRIBUTES, flags=FXF_OPEN_EXISTING, attrs=SFTPAttrs(), encoding='utf-8', errors='strict', block_size=SFTP_BLOCK_SIZE, max_requests=_MAX_SFTP_REQUESTS)
    .. automethod:: truncate
    .. automethod:: rename
    .. automethod:: posix_rename
@@ -1101,27 +1108,31 @@ SFTPClient
    .. automethod:: symlink
    .. automethod:: link
    .. automethod:: realpath
-   ============================================================================================================================== =
+   ============================================================================================================================================================================================================================== =
 
-   ============================= =
+   ======================================================= =
    File attribute access methods
-   ============================= =
+   ======================================================= =
    .. automethod:: stat
    .. automethod:: lstat
    .. automethod:: setstat
    .. automethod:: statvfs
-   .. automethod:: chown
+   .. automethod:: chown(path, uid or owner, gid or group)
    .. automethod:: chmod
    .. automethod:: utime
    .. automethod:: exists
    .. automethod:: lexists
    .. automethod:: getatime
+   .. automethod:: getatime_ns
    .. automethod:: getmtime
+   .. automethod:: getcrtime_ns
+   .. automethod:: getcrtime
+   .. automethod:: getmtime_ns
    .. automethod:: getsize
    .. automethod:: isdir
    .. automethod:: isfile
    .. automethod:: islink
-   ============================= =
+   ======================================================= =
 
    ================================================= =
    Directory access methods
@@ -1150,7 +1161,7 @@ SFTPClientFile
 
 .. autoclass:: SFTPClientFile()
 
-   ================================================ =
+   ================================================= =
    .. automethod:: read
    .. automethod:: write
    .. automethod:: seek(offset, from_what=SEEK_SET)
@@ -1159,12 +1170,14 @@ SFTPClientFile
    .. automethod:: setstat
    .. automethod:: statvfs
    .. automethod:: truncate
-   .. automethod:: chown
+   .. automethod:: chown(uid or owner, gid or group)
    .. automethod:: chmod
    .. automethod:: utime
+   .. automethod:: lock
+   .. automethod:: unlock
    .. automethod:: fsync
    .. automethod:: close
-   ================================================ =
+   ================================================= =
 
 SFTPServer
 ----------
@@ -1194,6 +1207,7 @@ SFTPServer
    File access methods
    ============================ =
    .. automethod:: open
+   .. automethod:: open56
    .. automethod:: close
    .. automethod:: read
    .. automethod:: write
@@ -1216,6 +1230,8 @@ SFTPServer
    .. automethod:: fsetstat
    .. automethod:: statvfs
    .. automethod:: fstatvfs
+   .. automethod:: lock
+   .. automethod:: unlock
    ============================= =
 
    ======================== =
@@ -1390,6 +1406,9 @@ When performing X.509 certificate authentication, AsyncSSH can be
 passed in an allowed set of ExtendedKeyUsage purposes. Purposes are
 matched in X.509 certificates as OID values, but AsyncSSH also allows
 the following well-known purpose values to be specified by name:
+
+.. table::
+  :align: left
 
   ================= ==================
   Name              OID
@@ -1712,12 +1731,25 @@ The following OpenSSH client config options are currently supported:
 For the "Match" conditional, the following criteria are currently supported:
 
   | All
+  | Exec
   | Host
   | LocalUser
   | OriginalHost
   | User
 
+  .. warning:: When instantiating :class:`SSHClientConnectionOptions`
+               objects manually within an asyncio task, you may block
+               the event loop if the options refer to a config file with
+               "Match Exec" directives which don't return immediate
+               results. In such cases, the asyncio `run_in_executor()`
+               function should be used. This is taken care of automatically
+               when options objects are created by AsyncSSH APIs such as
+               :func:`connect` and :func:`listen`.
+
 The following client config token expansions are currently supported:
+
+.. table::
+  :align: left
 
   ===== ============================================================
   Token Expansion
@@ -1781,13 +1813,26 @@ The following OpenSSH server config options are currently supported:
 For the "Match" conditional, the following criteria are currently supported:
 
   | All
+  | Exec
   | Address
   | Host
   | LocalAddress
   | LocalPort
   | User
 
+  .. warning:: When instantiating :class:`SSHServerConnectionOptions`
+               objects manually within an asyncio task, you may block
+               the event loop if the options refer to a config file with
+               "Match Exec" directives which don't return immediate
+               results. In such cases, the asyncio `run_in_executor()`
+               function should be used. This is taken care of automatically
+               when options objects are created by AsyncSSH APIs such as
+               :func:`connect` and :func:`listen`.
+
 The following server config token expansions are currently supported:
+
+.. table::
+  :align: left
 
   ===== ===========
   Token Expansion
@@ -2057,6 +2102,29 @@ SFTPError
 .. autoexception:: SFTPNoConnection
 .. autoexception:: SFTPConnectionLost
 .. autoexception:: SFTPOpUnsupported
+.. autoexception:: SFTPInvalidHandle
+.. autoexception:: SFTPNoSuchPath
+.. autoexception:: SFTPFileAlreadyExists
+.. autoexception:: SFTPWriteProtect
+.. autoexception:: SFTPNoMedia
+.. autoexception:: SFTPNoSpaceOnFilesystem
+.. autoexception:: SFTPQuotaExceeded
+.. autoexception:: SFTPUnknownPrincipal
+.. autoexception:: SFTPLockConflict
+.. autoexception:: SFTPDirNotEmpty
+.. autoexception:: SFTPNotADirectory
+.. autoexception:: SFTPInvalidFilename
+.. autoexception:: SFTPLinkLoop
+.. autoexception:: SFTPCannotDelete
+.. autoexception:: SFTPInvalidParameter
+.. autoexception:: SFTPFileIsADirectory
+.. autoexception:: SFTPByteRangeLockConflict
+.. autoexception:: SFTPByteRangeLockRefused
+.. autoexception:: SFTPDeletePending
+.. autoexception:: SFTPFileCorrupt
+.. autoexception:: SFTPOwnerInvalid
+.. autoexception:: SFTPGroupInvalid
+.. autoexception:: SFTPNoMatchingByteRangeLock
 
 KeyImportError
 --------------
@@ -2318,6 +2386,8 @@ currently supported by AsyncSSH:
   | ecdsa-sha2-nistp384-cert-v01\@openssh.com
   | ecdsa-sha2-nistp256-cert-v01\@openssh.com
   | ecdsa-sha2-1.3.132.0.10-cert-v01\@openssh.com
+  | rsa-sha2-256-cert-v01\@openssh.com
+  | rsa-sha2-512-cert-v01\@openssh.com
   | ssh-rsa-cert-v01\@openssh.com
   | sk-ssh-ed25519\@openssh.com
   | sk-ecdsa-sha2-nistp256\@openssh.com
@@ -2403,19 +2473,48 @@ In addition, AsyncSSH defines the following channel open failure reason codes:
 SFTP error codes
 ----------------
 
-The following values defined in the `SSH File Transfer Internet Draft
-<http://www.openssh.com/txt/draft-ietf-secsh-filexfer-02.txt>`_ can be
-specified as SFTP error codes:
+The following values defined in section 9.1 of the `SSH File Transfer Protocol
+Internet Draft <https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-13#section-9.1>`_ can be specified as SFTP error codes:
 
-  | FX_OK
-  | FX_EOF
-  | FX_NO_SUCH_FILE
-  | FX_PERMISSION_DENIED
-  | FX_FAILURE
-  | FX_BAD_MESSAGE
-  | FX_NO_CONNECTION
-  | FX_CONNECTION_LOST
-  | FX_OP_UNSUPPORTED
+.. table::
+  :align: left
+
+  =============================== ====================
+  Error code                      Minimum SFTP version
+  =============================== ====================
+  FX_OK                           3
+  FX_EOF                          3
+  FX_NO_SUCH_FILE                 3
+  FX_PERMISSION_DENIED            3
+  FX_FAILURE                      3
+  FX_BAD_MESSAGE                  3
+  FX_NO_CONNECTION                3
+  FX_CONNECTION_LOST              3
+  FX_OP_UNSUPPORTED               3
+  FX_INVALID_HANDLE               4
+  FX_NO_SUCH_PATH                 4
+  FX_FILE_ALREADY_EXISTS          4
+  FX_WRITE_PROTECT                4
+  FX_NO_MEDIA                     4
+  FX_NO_SPACE_ON_FILESYSTEM       5
+  FX_QUOTA_EXCEEDED               5
+  FX_UNKNOWN_PRINCIPAL            5
+  FX_LOCK_CONFLICT                5
+  FX_DIR_NOT_EMPTY                6
+  FX_NOT_A_DIRECTORY              6
+  FX_INVALID_FILENAME             6
+  FX_LINK_LOOP                    6
+  FX_CANNOT_DELETE                6
+  FX_INVALID_PARAMETER            6
+  FX_FILE_IS_A_DIRECTORY          6
+  FX_BYTE_RANGE_LOCK_CONFLICT     6
+  FX_BYTE_RANGE_LOCK_REFUSED      6
+  FX_DELETE_PENDING               6
+  FX_FILE_CORRUPT                 6
+  FX_OWNER_INVALID                6
+  FX_GROUP_INVALID                6
+  FX_NO_MATCHING_BYTE_RANGE_LOCK  6
+  =============================== ====================
 
 .. index:: Extended data types
 .. _ExtendedDataTypes:

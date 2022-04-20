@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.6
 
-# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -47,15 +47,20 @@ setup(name = 'asyncssh',
       author = __author__,
       author_email = __author_email__,
       url = __url__,
+      project_urls = {
+         'Documentation': 'https://asyncssh.readthedocs.io',
+         'Source':        'https://github.com/ronf/asyncssh',
+         'Tracker':       'https://github.com/ronf/asyncssh/issues'
+      },
       license = 'Eclipse Public License v2.0',
       description = doclines[0],
       long_description = long_description,
       platforms = 'Any',
       python_requires = '>= 3.6',
-      install_requires = ['cryptography >= 2.8'],
+      install_requires = ['cryptography >= 3.1', 'typing_extensions >= 3.6'],
       extras_require = {
           'bcrypt':     ['bcrypt >= 3.1.3'],
-          'fido2':      ['fido2 == 0.9.1'],
+          'fido2':      ['fido2 >= 0.9.2'],
           'gssapi':     ['gssapi >= 1.2.0'],
           'libnacl':    ['libnacl >= 1.4.2'],
           'pkcs11':     ['python-pkcs11 >= 0.7.0'],
@@ -63,6 +68,7 @@ setup(name = 'asyncssh',
           'pywin32':    ['pywin32 >= 227']
       },
       packages = ['asyncssh', 'asyncssh.crypto'],
+      package_data = {'asyncssh': ['py.typed']},
       scripts = [],
       test_suite = 'tests',
       classifiers = [
@@ -75,6 +81,8 @@ setup(name = 'asyncssh',
           'Programming Language :: Python :: 3.6',
           'Programming Language :: Python :: 3.7',
           'Programming Language :: Python :: 3.8',
+          'Programming Language :: Python :: 3.9',
+          'Programming Language :: Python :: 3.10',
           'Topic :: Internet',
           'Topic :: Security :: Cryptography',
           'Topic :: Software Development :: Libraries :: Python Modules',

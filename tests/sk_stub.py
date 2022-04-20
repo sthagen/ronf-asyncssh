@@ -1,4 +1,4 @@
-# Copyright (c) 2019-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2019-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -195,7 +195,7 @@ class Ctap2(_CtapStub):
         if self.dev.error == 'err':
             raise CtapError(CtapError.ERR.INVALID_CREDENTIAL)
         elif self.dev.error == 'pinreq':
-            raise CtapError(CtapError.ERR.PIN_REQUIRED)
+            raise CtapError(CtapError.ERR.PUAT_REQUIRED)
         elif self.dev.error == 'badpin':
             raise CtapError(CtapError.ERR.PIN_INVALID)
 

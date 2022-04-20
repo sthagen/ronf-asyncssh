@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2016-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -370,7 +370,7 @@ class _TestConnection(ServerTestCase):
                                         acceptor=acceptor))
 
     async def get_server_host_key(self, **kwargs):
-        """Create a connection to the test server"""
+        """Get host key from the test server"""
 
         return (await asyncssh.get_server_host_key(self._server_addr,
                                                    self._server_port,
@@ -412,14 +412,43 @@ class _TestConnection(ServerTestCase):
         """Test failure connecting"""
 
         with self.assertRaises(OSError):
-            await asyncssh.connect('0.0.0.1')
+            await asyncssh.connect('\xff')
 
     @asynctest
     async def test_connect_failure_without_agent(self):
         """Test failure connecting with SSH agent disabled"""
 
         with self.assertRaises(OSError):
-            await asyncssh.connect('0.0.0.1', agent_path=None)
+            await asyncssh.connect('\xff', agent_path=None)
+
+    @asynctest
+    async def test_connect_timeout_exceeded(self):
+        """Test connect timeout exceeded"""
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncssh.connect('223.255.255.254', connect_timeout=1)
+
+    @asynctest
+    async def test_connect_timeout_exceeded_string(self):
+        """Test connect timeout exceeded with string value"""
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncssh.connect('223.255.255.254', connect_timeout='0m1s')
+
+    @asynctest
+    async def test_connect_timeout_exceeded_tunnel(self):
+        """Test connect timeout exceeded"""
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncssh.listen(server_host_keys=['skey'],
+                                  tunnel='223.255.255.254', connect_timeout=1)
+
+    @asynctest
+    async def test_invalid_connect_timeout(self):
+        """Test invalid connect timeout"""
+
+        with self.assertRaises(ValueError):
+            await self.connect(connect_timeout=-1)
 
     @asynctest
     async def test_connect_tcp_keepalive_off(self):
@@ -524,7 +553,7 @@ class _TestConnection(ServerTestCase):
         """Test failure connecting when retrieving a server host key"""
 
         with self.assertRaises(OSError):
-            await asyncssh.get_server_host_key('0.0.0.1')
+            await asyncssh.get_server_host_key('\xff')
 
     @unittest.skipUnless(_nc_available, 'Netcat not available')
     @asynctest
@@ -543,7 +572,8 @@ class _TestConnection(ServerTestCase):
     async def test_get_server_host_key_proxy_failure(self):
         """Test failure retrieving a server host key using proxy command"""
 
-        proxy_command = 'nc 0.0.0.1 1'
+        # Leave out arguments to 'nc' to trigger a faliure
+        proxy_command = 'nc'
 
         with self.assertRaises((OSError, asyncssh.ConnectionLost)):
             await self.connect(proxy_command=proxy_command)
@@ -1770,6 +1800,29 @@ class _TestServerX509Chain(ServerTestCase):
         with self.assertRaises(asyncssh.HostKeyNotVerifiable):
             await self.connect(known_hosts=([], [], [], ['root_ca_cert.pem'],
                                             ['int_ca_cert.pem'], [], []))
+
+    @asynctest
+    async def test_connect_x509_openssh_known_hosts_trusted(self):
+        """Test connecting with OpenSSH cert in known hosts trusted list"""
+
+        with self.assertRaises(ValueError):
+            await self.connect(known_hosts=[[], [], [], 'skey-cert.pub',
+                                            [], [], []])
+
+    @asynctest
+    async def test_connect_x509_openssh_known_hosts_revoked(self):
+        """Test connecting with OpenSSH cert in known hosts revoked list"""
+
+        with self.assertRaises(ValueError):
+            await self.connect(known_hosts=[[], [], [], [], 'skey-cert.pub',
+                                            [], []])
+
+    @asynctest
+    async def test_connect_x509_openssh_x509_trusted(self):
+        """Test connecting with OpenSSH cert in X.509 trusted certs list"""
+
+        with self.assertRaises(ValueError):
+            await self.connect(x509_trusted_certs='skey-cert.pub')
 
     @asynctest
     async def test_invalid_x509_path(self):

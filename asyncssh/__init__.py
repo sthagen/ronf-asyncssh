@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -40,10 +40,13 @@ from .client import SSHClient
 
 from .config import ConfigParseError
 
+from .forward import SSHForwarder
+
 from .connection import SSHAcceptor, SSHClientConnection, SSHServerConnection
 from .connection import SSHClientConnectionOptions, SSHServerConnectionOptions
 from .connection import create_connection, create_server, connect, listen
 from .connection import connect_reverse, listen_reverse, get_server_host_key
+from .connection import get_server_auth_methods
 
 from .editor import SSHLineEditorChannel
 
@@ -55,18 +58,19 @@ from .listener import SSHListener
 
 from .logging import logger, set_log_level, set_sftp_log_level, set_debug_level
 
+from .misc import BytesOrStr
 from .misc import Error, DisconnectError, ChannelOpenError, ChannelListenError
 from .misc import ConnectionLost, CompressionError, HostKeyNotVerifiable
 from .misc import KeyExchangeFailed, IllegalUserName, MACError
 from .misc import PermissionDenied, ProtocolError, ProtocolNotSupported
-from .misc import ServiceNotAvailable
-from .misc import PasswordChangeRequired
+from .misc import ServiceNotAvailable, PasswordChangeRequired
 from .misc import BreakReceived, SignalReceived, TerminalSizeChanged
 
 from .pbe import KeyEncryptionError
 
 from .pkcs11 import load_pkcs11_keys
 
+from .process import SSHServerProcessFactory
 from .process import SSHClientProcess, SSHServerProcess
 from .process import SSHCompletedProcess, ProcessError
 from .process import TimeoutError # pylint: disable=redefined-builtin
@@ -84,7 +88,7 @@ from .public_key import load_resident_keys
 
 from .scp import scp
 
-from .session import SSHClientSession, SSHServerSession
+from .session import DataType, SSHClientSession, SSHServerSession
 from .session import SSHTCPSession, SSHUNIXSession
 
 from .server import SSHServer
@@ -92,11 +96,21 @@ from .server import SSHServer
 from .sftp import SFTPClient, SFTPClientFile, SFTPServer, SFTPError
 from .sftp import SFTPEOFError, SFTPNoSuchFile, SFTPPermissionDenied
 from .sftp import SFTPFailure, SFTPBadMessage, SFTPNoConnection
+from .sftp import SFTPInvalidHandle, SFTPNoSuchPath, SFTPFileAlreadyExists
+from .sftp import SFTPWriteProtect, SFTPNoMedia, SFTPNoSpaceOnFilesystem
+from .sftp import SFTPQuotaExceeded, SFTPUnknownPrincipal, SFTPLockConflict
+from .sftp import SFTPDirNotEmpty, SFTPNotADirectory, SFTPInvalidFilename
+from .sftp import SFTPLinkLoop, SFTPCannotDelete, SFTPInvalidParameter
+from .sftp import SFTPFileIsADirectory, SFTPByteRangeLockConflict
+from .sftp import SFTPByteRangeLockRefused, SFTPDeletePending
+from .sftp import SFTPFileCorrupt, SFTPOwnerInvalid, SFTPGroupInvalid
+from .sftp import SFTPNoMatchingByteRangeLock
 from .sftp import SFTPConnectionLost, SFTPOpUnsupported
 from .sftp import SFTPAttrs, SFTPVFSAttrs, SFTPName
 from .sftp import SEEK_SET, SEEK_CUR, SEEK_END
 
-from .stream import SSHReader, SSHWriter
+from .stream import SSHSocketSessionFactory, SSHServerSessionFactory
+from .stream import SFTPServerFactory, SSHReader, SSHWriter
 
 from .subprocess import SSHSubprocessReadPipe, SSHSubprocessWritePipe
 from .subprocess import SSHSubprocessProtocol, SSHSubprocessTransport

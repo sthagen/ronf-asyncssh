@@ -1,4 +1,4 @@
-# Copyright (c) 2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2020-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -36,6 +36,16 @@ from .util import TempDirTestCase
 
 class _TestConfig(TempDirTestCase):
     """Unit tests for config module"""
+
+    @classmethod
+    def setUpClass(cls):
+        """Set up $HOME and .ssh directory"""
+
+        super().setUpClass()
+
+        os.mkdir('.ssh', 0o700)
+        os.environ['HOME'] = '.'
+        os.environ['USERPROFILE'] = '.'
 
     def _load_config(self, config, last_config=None, reload=False):
         """Abstract method to load a config object"""
@@ -125,23 +135,62 @@ class _TestConfig(TempDirTestCase):
                          'none,zlib@openssh.com,zlib')
 
         config = self._parse_config('')
-        self.assertEqual(config.get_compression_algs('default'), 'default')
+        self.assertEqual(config.get_compression_algs(), ())
 
     def test_include(self):
         """Test include config option"""
 
-        with open('include', 'w') as f:
+        with open('.ssh/include', 'w') as f:
             f.write('Port 2222')
 
-        for path in ('include', Path('include').absolute().as_posix()):
+        for path in ('include', Path('.ssh/include').absolute().as_posix()):
             config = self._parse_config('Include %s' % path)
             self.assertEqual(config.get('Port'), 2222)
+
+    def test_missing_include(self):
+        """Test missing include target"""
+
+        # Missing include files should be ignored
+        self._parse_config('Include xxx')
+
+    def test_multiple_include(self):
+        """Test multiple levels of include"""
+
+        os.mkdir('.ssh/dir1')
+        os.mkdir('.ssh/dir2')
+
+        with open('.ssh/include', 'w') as f:
+            f.write('Include dir1/include2\n'
+                    'Include dir2/include4\n')
+
+        with open('.ssh/dir1/include2', 'w') as f:
+            f.write('Include dir1/include3\n')
+
+        with open('.ssh/dir1/include3', 'w') as f:
+            f.write('AddressFamily inet\n')
+
+        with open('.ssh/dir2/include4', 'w') as f:
+            f.write('Port 2222\n')
+
+        config = self._parse_config('Include include')
+        self.assertEqual(config.get('AddressFamily'), socket.AF_INET)
+        self.assertEqual(config.get('Port'), 2222)
 
     def test_match_all(self):
         """Test a match block which always matches"""
 
         config = self._parse_config('Match user xxx\nMatch all\nPort 2222')
         self.assertEqual(config.get('Port'), 2222)
+
+    def test_match_exec(self):
+        """Test a match block which runs a subprocess"""
+
+        config = self._parse_config('Match exec "exit 0"\nPort 2222')
+        self.assertEqual(config.get('Port'), 2222)
+
+
+        config = self._parse_config('Match exec "exit 1"\nPort 2222')
+        self.assertEqual(config.get('Port'), None)
 
     def test_config_disabled(self):
         """Test config loading being disabled"""
@@ -328,13 +377,13 @@ class _TestClientConfig(_TestConfig):
 
             return 'thishost.local'
 
-        def mock_home():
+        def mock_expanduser(_):
             """Return a static local home directory"""
 
             return '/home/user'
 
         with patch('socket.gethostname', mock_gethostname):
-            with patch('pathlib.Path.home', mock_home):
+            with patch('os.path.expanduser', mock_expanduser):
                 config = self._parse_config(
                     'Hostname newhost\n'
                     'User newuser\n'
@@ -359,6 +408,33 @@ class _TestClientConfig(_TestConfig):
             config = self._parse_config('RemoteCommand %i')
 
         self.assertEqual(config.get('RemoteCommand'), '123')
+
+    def test_home_percent_expansion_unavailable(self):
+        """Test home directory token percent expansion not being available"""
+
+        def mock_expanduser(path):
+            """Don't expand the home directory"""
+
+            return path
+
+        with self.assertRaises(asyncssh.ConfigParseError):
+            with patch('os.path.expanduser', mock_expanduser):
+                self._parse_config('RemoteCommand %d')
+
+    def test_uid_percent_expansion_unavailable(self):
+        """Test UID token percent expansion not being available"""
+
+        orig_hasattr = hasattr
+
+        def mock_hasattr(obj, attr):
+            if obj == os and attr == 'getuid':
+                return False
+            else:
+                return orig_hasattr(obj, attr)
+
+        with self.assertRaises(asyncssh.ConfigParseError):
+            with patch('builtins.hasattr', mock_hasattr):
+                self._parse_config('RemoteCommand %i')
 
     def test_invalid_percent_expansion(self):
         """Test invalid percent expansion"""

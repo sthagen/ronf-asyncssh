@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2016-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -238,6 +238,12 @@ class _X11Server(Server):
                     result = None
 
                 stdin.channel.exit(bool(result))
+            elif action == 'invalid':
+                try:
+                    result = await self._conn.create_x11_connection(
+                        None, b'\xff')
+                except asyncssh.ChannelOpenError:
+                    pass
             elif action == 'sleep':
                 await asyncio.sleep(0.1)
             else:
@@ -273,12 +279,12 @@ class _TestX11(ServerTestCase):
                 XAUTH_PROTO_COOKIE, auth_data)))
 
             auth_file.write(bytes(SSHXAuthorityEntry(
-                XAUTH_FAMILY_IPV4, socket.inet_pton(socket.AF_INET, '0.0.0.2'),
-                b'0', XAUTH_PROTO_COOKIE, auth_data)))
+                XAUTH_FAMILY_IPV4, socket.inet_pton(socket.AF_INET,
+                '127.0.0.2'), b'0', XAUTH_PROTO_COOKIE, auth_data)))
 
             auth_file.write(bytes(SSHXAuthorityEntry(
-                XAUTH_FAMILY_IPV4, socket.inet_pton(socket.AF_INET, '0.0.0.1'),
-                b'0', XAUTH_PROTO_COOKIE, auth_data)))
+                XAUTH_FAMILY_IPV4, socket.inet_pton(socket.AF_INET,
+                '127.0.0.1'), b'0', XAUTH_PROTO_COOKIE, auth_data)))
 
             auth_file.write(bytes(SSHXAuthorityEntry(
                 XAUTH_FAMILY_IPV6, socket.inet_pton(socket.AF_INET6, '::2'),
@@ -417,7 +423,7 @@ class _TestX11(ServerTestCase):
     async def test_ipv4_address(self):
         """Test matching against an IPv4 address"""
 
-        await self._check_x11(x11_display='0.0.0.1:0')
+        await self._check_x11(x11_display='127.0.0.1:0')
 
     @asynctest
     async def test_ipv6_address(self):
@@ -594,6 +600,14 @@ class _TestX11(ServerTestCase):
         async with self.connect() as conn:
             result = await conn.run('open')
             self.assertEqual(result.exit_status, 0)
+
+    @asynctest
+    async def test_open_invalid_unicode(self):
+        """Test opening X11 connection with invalid unicode in original host"""
+
+        async with self.connect() as conn:
+            result = await conn.run('invalid')
+            self.assertEqual(result.exit_status, None)
 
     @asynctest
     async def test_forwarding_not_allowed(self):

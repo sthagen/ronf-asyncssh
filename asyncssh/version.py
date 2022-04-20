@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -26,4 +26,4 @@ __author_email__ = 'ronf@timeheart.net'
 
 __url__ = 'http://asyncssh.timeheart.net'
 
-__version__ = '2.7.2'
+__version__ = '2.10.1'

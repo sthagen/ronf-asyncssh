@@ -1,12 +1,15 @@
 [run]
 branch = True
+relative_files = True
+source =
+    asyncssh
+    tests
 
 [report]
 exclude_lines =
+    if TYPE_CHECKING:
     pragma: no cover
     raise NotImplementedError
 partial_branches =
     pragma: no branch
     for .*
-omit =
-    .tox/*

@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2014-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -71,13 +71,18 @@ except subprocess.CalledProcessError: # pragma: no cover
 
 _openssl_available = _openssl_version != b''
 
+if _openssl_available: # pragma: no branch
+    _openssl_curves = run('openssl ecparam -list_curves')
+else: # pragma: no cover
+    _openssl_curves = b''
+
 # The openssl "-v2prf" option is only available in OpenSSL 1.0.2 or later
 _openssl_supports_v2prf = _openssl_version >= b'OpenSSL 1.0.2'
 
 # Ed25519/Ed448 support via "pkey" is only available in OpenSSL 1.1.1 or later
 _openssl_supports_pkey = _openssl_version >= b'OpenSSL 1.1.1'
 
-if _openssl_version >= b'OpenSSL 3':
+if _openssl_version >= b'OpenSSL 3': # pragma: no branch
     _openssl_legacy = '-provider default -provider legacy '
 else: # pragma: no cover
     _openssl_legacy = ''
@@ -1390,7 +1395,9 @@ class _TestPublicKey(TempDirTestCase):
                 self.assertEqual(cert.get_comment(), 'user_comment')
 
                 cert = self.privca.generate_user_certificate(
-                    self.pubkey, 'name', comment='cert_comment')
+                    self.pubkey, 'name', principals='name1,name2',
+                    comment='cert_comment')
+                self.assertEqual(cert.principals, ['name1', 'name2'])
                 self.assertEqual(cert.get_comment_bytes(), b'cert_comment')
                 self.assertEqual(cert.get_comment(), 'cert_comment')
 
@@ -1400,7 +1407,9 @@ class _TestPublicKey(TempDirTestCase):
                 self.assertEqual(cert.get_comment(), 'host_comment')
 
                 cert = self.privca.generate_host_certificate(
-                    self.pubkey, 'name', comment=b'\xff')
+                    self.pubkey, 'name', principals=['name1', 'name2'],
+                    comment=b'\xff')
+                self.assertEqual(cert.principals, ['name1', 'name2'])
                 self.assertEqual(cert.get_comment_bytes(), b'\xff')
                 with self.assertRaises(UnicodeDecodeError):
                     cert.get_comment()
@@ -2256,9 +2265,9 @@ class _TestPublicKeyTopLevel(TempDirTestCase):
                         '-param_enc explicit' % curve)
                     asyncssh.read_private_key('priv')
 
-    @unittest.skipIf(b'secp224r1' not in run('openssl ecparam -list_curves'),
-                     "this openssl doesn't support secp224r1")
     @unittest.skipIf(not _openssl_available, "openssl isn't available")
+    @unittest.skipIf(b'secp224r1' not in _openssl_curves,
+                     "this openssl doesn't support secp224r1")
     def test_ec_explicit_unknown(self):
         """Import EC key with unknown explicit parameters"""
 
