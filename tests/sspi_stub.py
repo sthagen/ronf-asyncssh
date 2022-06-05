@@ -21,13 +21,10 @@
 
 """Stub SSPI module for unit tests"""
 
-import sys
+from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
+from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
 
 from .gss_stub import step
-
-if sys.platform == 'win32':
-    from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
-    from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
 
 
 class SSPIBuffer:
@@ -53,7 +50,7 @@ class SSPIContext:
 
         if attr == SECPKG_ATTR_NATIVE_NAMES:
             return ['user@TEST', 'host@TEST']
-        else:
+        else: # pragma: no cover
             return None
 
 
@@ -126,7 +123,10 @@ class SSPIAuth:
 
         # pylint: disable=no-self-use,unused-argument
 
-        return b'fail' if 'fail' in self._host else 'succeed'
+        if 'sign_error' in self._host:
+            raise SSPIError('Signing error')
+
+        return b'fail' if 'verify_error' in self._host else b''
 
     def verify(self, data, sig):
         """Verify a signature for a block of data"""
