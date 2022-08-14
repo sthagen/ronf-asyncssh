@@ -1,4 +1,4 @@
-# Copyright (c) 2015-2020 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2015-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -30,6 +30,8 @@ import tempfile
 import unittest
 
 from unittest.mock import patch
+
+from cryptography.hazmat.backends.openssl import backend
 
 # pylint: disable=unused-import
 
@@ -71,6 +73,13 @@ else:
 
 # pylint: enable=no-member
 
+
+# pylint: disable=protected-access
+
+# Disable RSA key blinding to speed up unit tests
+backend._rsa_skip_check_key = True
+
+# pylint: enable=protected-access
 
 _test_keys = {}
 
@@ -197,7 +206,7 @@ def make_certificate(cert_version, cert_type, key, signing_key, principals,
     if bad_signature:
         data += String('')
     else:
-        data += String(signing_key.sign(data, signing_key.algorithm))
+        data += String(signing_key.sign(data, signing_key.sig_algorithms[0]))
 
     return b''.join((cert_version.encode('ascii'), b' ',
                      binascii.b2a_base64(data)))

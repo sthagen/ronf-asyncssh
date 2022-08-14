@@ -145,6 +145,16 @@ listen_reverse
 
 .. autofunction:: listen_reverse
 
+run_client
+----------
+
+.. autofunction:: run_client
+
+run_server
+----------
+
+.. autofunction:: run_server
+
 create_connection
 -----------------
 
@@ -1164,6 +1174,7 @@ SFTPClientFile
 
    ================================================= =
    .. automethod:: read
+   .. automethod:: read_parallel
    .. automethod:: write
    .. automethod:: seek(offset, from_what=SEEK_SET)
    .. automethod:: tell
@@ -1238,9 +1249,9 @@ SFTPServer
    ======================== =
    Directory access methods
    ======================== =
-   .. automethod:: listdir
    .. automethod:: mkdir
    .. automethod:: rmdir
+   .. automethod:: scandir
    ======================== =
 
    ===================== =
@@ -2191,6 +2202,7 @@ by AsyncSSH:
   | gss-group17-sha512
   | gss-group18-sha512
   | gss-group14-sha1
+  | sntrup761x25519-sha512\@openssh.com
   | curve25519-sha256
   | curve25519-sha256\@libssh.org
   | curve448-sha512
@@ -2232,6 +2244,9 @@ installed on UNIX or the pywin32 package is installed on Windows.
 Curve25519 and Curve448 support is available when OpenSSL 1.1.1 or
 later is installed. Alternately, Curve25519 is available when the
 libnacl package and libsodium library are installed.
+
+SNTRUP support is available when the Open Quantum Safe (liboqs)
+dynamic library is installed.
 
 .. index:: Encryption algorithms
 .. _EncryptionAlgs:

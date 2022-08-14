@@ -417,8 +417,14 @@ class _TestClientConfig(_TestConfig):
 
             return path
 
+        def mock_pathlib_expanduser(self):
+            """Expand user even with os.path.expanduser mocked out"""
+
+            return Path(os.environ['HOME'], *self.parts[1:])
+
         with self.assertRaises(asyncssh.ConfigParseError):
-            with patch('os.path.expanduser', mock_expanduser):
+            with patch('os.path.expanduser', mock_expanduser), \
+                    patch('pathlib.Path.expanduser', mock_pathlib_expanduser):
                 self._parse_config('RemoteCommand %d')
 
     def test_uid_percent_expansion_unavailable(self):

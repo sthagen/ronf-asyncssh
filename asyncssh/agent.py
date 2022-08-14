@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2016-2022 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -64,7 +64,7 @@ try:
     else:
         from .agent_unix import open_agent
 except ImportError as _exc: # pragma: no cover
-    async def open_agent(agent_path: Optional[str]) -> \
+    async def open_agent(agent_path: str) -> \
             Tuple[AgentReader, AgentWriter]:
         """Dummy function if we're unable to import agent support"""
 
@@ -78,7 +78,7 @@ class _SupportsOpenAgentConnection(Protocol):
         """Open a forwarded ssh-agent connection back to the client"""
 
 
-_AgentPath = Union[None, str, _SupportsOpenAgentConnection]
+_AgentPath = Union[str, _SupportsOpenAgentConnection]
 
 
 # Client request message numbers
@@ -161,7 +161,7 @@ class SSHAgentKeyPair(SSHKeyPair):
 
         super().set_sig_algorithm(sig_algorithm)
 
-        if sig_algorithm == b'rsa-sha2-256':
+        if sig_algorithm in (b'rsa-sha2-256', b'x509v3-rsa2048-sha256'):
             self._flags |= SSH_AGENT_RSA_SHA2_256
         elif sig_algorithm == b'rsa-sha2-512':
             self._flags |= SSH_AGENT_RSA_SHA2_512
@@ -222,7 +222,7 @@ class SSHAgentClient:
     async def connect(self) -> None:
         """Connect to the SSH agent"""
 
-        if isinstance(self._agent_path, str) or self._agent_path is None:
+        if isinstance(self._agent_path, str):
             self._reader, self._writer = await open_agent(self._agent_path)
         else:
             self._reader, self._writer = \
@@ -626,7 +626,7 @@ class SSHAgentListener:
 
 
 @async_context_manager
-async def connect_agent(agent_path: _AgentPath = None) -> 'SSHAgentClient':
+async def connect_agent(agent_path: _AgentPath = '') -> 'SSHAgentClient':
     """Make a connection to the SSH agent
 
        This function attempts to connect to an ssh-agent process
@@ -654,7 +654,7 @@ async def connect_agent(agent_path: _AgentPath = None) -> 'SSHAgentClient':
     """
 
     if not agent_path:
-        agent_path = os.environ.get('SSH_AUTH_SOCK', None)
+        agent_path = os.environ.get('SSH_AUTH_SOCK', '')
 
     agent = SSHAgentClient(agent_path)
     await agent.connect()

@@ -21,10 +21,14 @@
 
 """Stub SSPI module for unit tests"""
 
-from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
-from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
+
+import sys
 
 from .gss_stub import step
+
+if sys.platform == 'win32': # pragma: no cover
+    from asyncssh.gss_win32 import ASC_RET_INTEGRITY, ISC_RET_INTEGRITY
+    from asyncssh.gss_win32 import SECPKG_ATTR_NATIVE_NAMES, SSPIError
 
 
 class SSPIBuffer:

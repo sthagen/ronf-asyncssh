@@ -398,6 +398,48 @@ class _TestConnection(ServerTestCase):
             pass
 
     @asynctest
+    async def test_connect_sock(self):
+        """Test connecting using an already-connected socket"""
+
+        sock = socket.socket()
+        await self.loop.sock_connect(sock, (self._server_addr,
+                                            self._server_port))
+
+        async with asyncssh.connect(sock=sock):
+            pass
+
+    @asynctest
+    async def test_run_client(self):
+        """Test running an SSH client on an already-connected socket"""
+
+        sock = socket.socket()
+        await self.loop.sock_connect(sock, (self._server_addr,
+                                            self._server_port))
+
+        async with self.run_client(sock):
+            pass
+
+    @asynctest
+    async def test_connect_encrypted_key(self):
+        """Test connecting with encrytped client key and no passphrase"""
+
+        async with self.connect(client_keys='ckey_encrypted',
+                                ignore_encrypted=True):
+            pass
+
+        with self.assertRaises(asyncssh.KeyImportError):
+            await self.connect(client_keys='ckey_encrypted')
+
+        with open('config', 'w') as f:
+            f.write('IdentityFile ckey_encrypted')
+
+        async with self.connect(config='config'):
+            pass
+
+        with self.assertRaises(asyncssh.KeyImportError):
+            await self.connect(config='config', ignore_encrypted=False)
+
+    @asynctest
     async def test_connect_invalid_options_type(self):
         """Test connecting using options using incorrect type of options"""
 
@@ -1471,6 +1513,27 @@ class _TestConnection(ServerTestCase):
             await self.create_connection(_InternalErrorClient)
 
 
+class _TestConnectionListenSock(ServerTestCase):
+    """Unit test for specifying a listen socket"""
+
+    @classmethod
+    async def start_server(cls):
+        """Start an SSH server to connect to"""
+
+        sock = socket.socket()
+        sock.bind(('', 0))
+
+        return await cls.create_server(_TunnelServer, sock=sock)
+
+    @asynctest
+    async def test_connect(self):
+        """Test specifying explicit listen sock"""
+
+        with self.assertLogs(level='INFO'):
+            async with self.connect():
+                pass
+
+
 class _TestConnectionAsyncAcceptor(ServerTestCase):
     """Unit test for async acceptor"""
 
@@ -1538,6 +1601,28 @@ class _TestConnectionReverse(ServerTestCase):
         with self.assertLogs(level='INFO'):
             async with self.connect_reverse():
                 pass
+
+    @asynctest
+    async def test_connect_reverse_sock(self):
+        """Test reverse connection using an already-connected socket"""
+
+        sock = socket.socket()
+        await self.loop.sock_connect(sock, (self._server_addr,
+                                            self._server_port))
+
+        async with self.connect_reverse(sock=sock):
+            pass
+
+    @asynctest
+    async def test_run_server(self):
+        """Test running an SSH server on an already-connected socket"""
+
+        sock = socket.socket()
+        await self.loop.sock_connect(sock, (self._server_addr,
+                                            self._server_port))
+
+        async with self.run_server(sock):
+            pass
 
     @unittest.skipUnless(_nc_available, 'Netcat not available')
     @asynctest
