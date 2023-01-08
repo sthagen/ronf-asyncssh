@@ -8,10 +8,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.6", "3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11"]
         include:
           - os: macos-latest
             python-version: "3.10"
+            openssl-version: "3"
+          - os: macos-latest
+            python-version: "3.11"
             openssl-version: "3"
         exclude:
           # test hangs on these combination
@@ -21,75 +24,114 @@ jobs:
             python-version: "3.9"
           - os: windows-latest
             python-version: "3.10"
+          - os: windows-latest
+            python-version: "3.11"
+
     runs-on: ${{ matrix.os }}
+    env:
+      liboqs_version: '0.7.2'
+      nettle_version: nettle_3.8.1_release_20220727
+
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - name: Checkout asyncssh
+        uses: actions/checkout@v3
+        with:
+          path: asyncssh
+
+      - name: Checkout liboqs
+        if: ${{ runner.os != 'macOS' }}
+        uses: actions/checkout@v3
+        with:
+          repository: open-quantum-safe/liboqs
+          ref: ${{ env.liboqs_version }}
+          path: liboqs
+
+      - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Determine pip cache path
-        id: pip-cache
-        run: |
-          echo "::set-output name=dir::$(pip cache dir)"
-      - name: Set up pip cache
-        uses: actions/cache@v2
+          cache: pip
+          cache-dependency-path: |
+            asyncssh/setup.py
+            asyncssh/tox.ini
+
+      - name: Set up ccache for liboqs (Linux)
+        uses: hendrikmuhs/ccache-action@v1.2
+        if: ${{ runner.os == 'Linux' }}
         with:
-          path: ${{ steps.pip-cache.outputs.dir }}
-          key: pip-${{ runner.os }}-${{ hashFiles('setup.py', 'tox.ini') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
-      - name: Determine vcpkg cache path
-        if: ${{ runner.os == 'Windows' }}
-        id: vcpkg-cache
-        run: |
-          echo "::set-output name=archives-dir::$env:LOCALAPPDATA\vcpkg\archives"
-          echo "::set-output name=downloads-dir::$env:VCPKG_INSTALLATION_ROOT\downloads"
-      - name: Set up vcpkg cache
-        uses: actions/cache@v2
-        if: ${{ runner.os == 'Windows' }}
-        with:
-          path: |
-            ${{ steps.vcpkg-cache.outputs.archives-dir }}
-            ${{ steps.vcpkg-cache.outputs.downloads-dir }}
-          key: vcpkg
+          key: liboqs-cache-${{ matrix.os }}
+
       - name: Install Linux dependencies
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt install -y --no-install-recommends libnettle7 libsodium-dev libssl-dev libkrb5-dev ssh
+        run: sudo apt install -y --no-install-recommends libnettle8 libsodium-dev libssl-dev libkrb5-dev ssh cmake ninja-build
+
       - name: Install macOS dependencies
         if: ${{ runner.os == 'macOS' }}
-        run: brew install nettle libsodium openssl
+        run: brew install nettle liboqs libsodium openssl
+
       - name: Provide OpenSSL 3
         if: ${{ runner.os == 'macOS' && matrix.openssl-version == '3' }}
         run: echo "/usr/local/opt/openssl@3/bin" >> $GITHUB_PATH
-      - name: Install Windows dependencies
+
+      - name: Install nettle (Windows)
         if: ${{ runner.os == 'Windows' }}
-        run: vcpkg install libsodium nettle openssl --triplet x64-windows
+        shell: pwsh
+        run: |
+          curl -fLO https://github.com/ShiftMediaProject/nettle/releases/download/${{ env.nettle_version }}/libnettle_${{ env.nettle_version }}_msvc17.zip
+          Expand-Archive libnettle_${{ env.nettle_version }}_msvc17.zip nettle
+          cp nettle\bin\x64\*.dll "$env:Python_ROOT_DIR"
+
+      - name: Install liboqs (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        working-directory: liboqs
+        run: |
+          cmake -GNinja -Bbuild . -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_DIST_BUILD=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          cmake --build build
+          sudo cmake --install build
+
+      - name: Initialize MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install liboqs (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: liboqs
+        run: |
+          cmake -GNinja -Bbuild . -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON -DOQS_DIST_BUILD=ON
+          cmake --build build
+          cp build\bin\oqs.dll "$env:Python_ROOT_DIR"
+
       - name: Install Python dependencies
         run: pip install tox
+
       - name: Run tests
         shell: python
+        working-directory: asyncssh
         run: |
-          import os, sys, platform
+          import os, sys, platform, subprocess
           V = sys.version_info
           p = platform.system().lower()
-          exit(os.system(f"tox -e py{V.major}{V.minor}-{p} -- -ra"))
+          subprocess.run(
+              ['tox', '-e', f'py{V.major}{V.minor}-{p}', '--', '-ra'],
+              check=True)
+
       - name: Upload coverage data
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: coverage
-          path: .coverage.*
+          path: asyncssh/.coverage.*
           retention-days: 1
+
   report-coverage:
     name: Report coverage
     runs-on: ubuntu-latest
     needs: run-tests
     if: ${{ always() }}
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: "3.7"
-      - uses: actions/download-artifact@v2
+      - uses: actions/download-artifact@v3
         with:
           name: coverage
       - name: Install dependencies
@@ -103,6 +145,6 @@ jobs:
             sqlite3 "$f" "update file set path = replace(path, '\\', '/');"
           done
           tox -e report
-      - uses: codecov/codecov-action@v2
+      - uses: codecov/codecov-action@v3
         with:
           files: coverage.xml

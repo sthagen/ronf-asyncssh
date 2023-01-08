@@ -2952,6 +2952,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if listen_port == 0:
             listen_port = listener.get_port()
 
+        if dest_port == 0:
+            dest_port = listen_port
+
         self._local_listeners[listen_host, listen_port] = listener
 
         return listener
@@ -3039,6 +3042,12 @@ class SSHClientConnection(SSHConnection):
 
        UNIX domain socket forwarding can be set up by calling
        :meth:`forward_local_path` or :meth:`forward_remote_path`.
+
+       Mixed forwarding from a TCP port to a UNIX domain socket or
+       vice-versa can be set up by calling :meth:`forward_local_port_to_path`,
+       :meth:`forward_local_path_to_port`,
+       :meth:`forward_remote_port_to_path`, or
+       :meth:`forward_remote_path_to_port`.
 
     """
 
@@ -3934,11 +3943,12 @@ class SSHClientConnection(SSHConnection):
     # pylint: disable=redefined-builtin
     @async_context_manager
     async def create_process(self, *args: object,
-                             bufsize: int = io.DEFAULT_BUFFER_SIZE,
                              input: Optional[AnyStr] = None,
                              stdin: ProcessSource = PIPE,
                              stdout: ProcessTarget = PIPE,
                              stderr: ProcessTarget = PIPE,
+                             bufsize: int = io.DEFAULT_BUFFER_SIZE,
+                             send_eof: bool = True, recv_eof: bool = True,
                              **kwargs: object) -> SSHClientProcess:
         """Create a process on the remote system
 
@@ -3963,8 +3973,6 @@ class SSHClientConnection(SSHConnection):
            :meth:`create_session` except for `session_factory` are
            supported and have the same meaning.
 
-           :param bufsize: (optional)
-               Buffer size to use when feeding data from a file to stdin
            :param input: (optional)
                Input data to feed to standard input of the remote process.
                If specified, this argument takes precedence over stdin.
@@ -3982,8 +3990,23 @@ class SSHClientConnection(SSHConnection):
                :class:`SSHWriter` to feed standard error of the remote
                process to, `DEVNULL` to discard this output, or `STDOUT`
                to feed standard error to the same place as stdout.
-           :type bufsize: `int`
+           :param bufsize: (optional)
+               Buffer size to use when feeding data from a file to stdin
+           :param send_eof:
+               Whether or not to send EOF to the channel when EOF is
+               received from stdin, defaulting to `True`. If set to `False`,
+               the channel will remain open after EOF is received on stdin,
+               and multiple sources can be redirected to the channel.
+           :param recv_eof:
+               Whether or not to send EOF to stdout and stderr when EOF is
+               received from the channel, defaulting to `True`. If set to
+               `False`, the redirect targets of stdout and stderr will remain
+               open after EOF is received on the channel and can be used for
+               multiple redirects.
            :type input: `str` or `bytes`
+           :type bufsize: `int`
+           :type send_eof: `bool`
+           :type recv_eof: `bool`
 
            :returns: :class:`SSHClientProcess`
 
@@ -4002,7 +4025,8 @@ class SSHClientConnection(SSHConnection):
             chan.write_eof()
             new_stdin = None
 
-        await process.redirect(new_stdin, stdout, stderr, bufsize)
+        await process.redirect(new_stdin, stdout, stderr,
+                               bufsize, send_eof, recv_eof)
 
         return process
 
@@ -4253,7 +4277,7 @@ class SSHClientConnection(SSHConnection):
                The receive window size for this session
            :param max_pktsize: (optional)
                The maximum packet size for this session
-           :type session_factory: `callable`
+           :type session_factory: `callable` or coroutine
            :type listen_host: `str`
            :type listen_port: `int`
            :type encoding: `str` or `None`
@@ -4629,6 +4653,113 @@ class SSHClientConnection(SSHConnection):
                                     **kwargs) # type: ignore
 
     @async_context_manager
+    async def forward_local_port_to_path(self, listen_host: str,
+                                         listen_port: int,
+                                         dest_path: str) -> SSHListener:
+        """Set up local TCP port forwarding to a remote UNIX domain socket
+
+           This method is a coroutine which attempts to set up port
+           forwarding from a local TCP listening port to a remote UNIX
+           domain path via the SSH connection. If the request is successful,
+           the return value is an :class:`SSHListener` object which can be
+           used later to shut down the port forwarding.
+
+           :param listen_host:
+               The hostname or address on the local host to listen on
+           :param listen_port:
+               The port number on the local host to listen on
+           :param dest_path:
+               The path on the remote host to forward the connections to
+           :type listen_host: `str`
+           :type listen_port: `int`
+           :type dest_path: `str`
+
+           :returns: :class:`SSHListener`
+
+           :raises: :exc:`OSError` if the listener can't be opened
+
+        """
+
+        async def tunnel_connection(
+                session_factory: SSHUNIXSessionFactory[bytes],
+                _orig_host: str, _orig_port: int) -> \
+                    Tuple[SSHUNIXChannel[bytes], SSHUNIXSession[bytes]]:
+            """Forward a local connection over SSH"""
+
+            return (await self.create_unix_connection(session_factory,
+                                                      dest_path))
+
+        self.logger.info('Creating local TCP forwarder from %s to %s',
+                         (listen_host, listen_port), dest_path)
+
+        try:
+            listener = await create_tcp_forward_listener(self, self._loop,
+                                                         tunnel_connection,
+                                                         listen_host,
+                                                         listen_port)
+        except OSError as exc:
+            self.logger.debug1('Failed to create local TCP listener: %s', exc)
+            raise
+
+        if listen_port == 0:
+            listen_port = listener.get_port()
+
+        self._local_listeners[listen_host, listen_port] = listener
+
+        return listener
+
+    @async_context_manager
+    async def forward_local_path_to_port(self, listen_path: str,
+                                         dest_host: str,
+                                         dest_port: int) -> SSHListener:
+        """Set up local UNIX domain socket forwarding to a remote TCP port
+
+           This method is a coroutine which attempts to set up UNIX domain
+           socket forwarding from a local listening path to a remote host
+           and port via the SSH connection. If the request is successful,
+           the return value is an :class:`SSHListener` object which can
+           be used later to shut down the UNIX domain socket forwarding.
+
+           :param listen_path:
+               The path on the local host to listen on
+           :param dest_host:
+               The hostname or address to forward the connections to
+           :param dest_port:
+               The port number to forward the connections to
+           :type listen_path: `str`
+           :type dest_host: `str`
+           :type dest_port: `int`
+
+           :returns: :class:`SSHListener`
+
+           :raises: :exc:`OSError` if the listener can't be opened
+
+        """
+
+        async def tunnel_connection(
+                session_factory: SSHTCPSessionFactory[bytes]) -> \
+                    Tuple[SSHTCPChannel[bytes], SSHTCPSession[bytes]]:
+            """Forward a local connection over SSH"""
+
+            return await self.create_connection(session_factory, dest_host,
+                                                dest_port, '', 0)
+
+        self.logger.info('Creating local UNIX forwarder from %s to %s',
+                         listen_path, (dest_host, dest_port))
+
+        try:
+            listener = await create_unix_forward_listener(self, self._loop,
+                                                          tunnel_connection,
+                                                          listen_path)
+        except OSError as exc:
+            self.logger.debug1('Failed to create local UNIX listener: %s', exc)
+            raise
+
+        self._local_listeners[listen_path] = listener
+
+        return listener
+
+    @async_context_manager
     async def forward_remote_port(self, listen_host: str,
                                   listen_port: int, dest_host: str,
                                   dest_port: int) -> SSHListener:
@@ -4706,6 +4837,88 @@ class SSHClientConnection(SSHConnection):
 
         self.logger.info('Creating remote UNIX forwarder from %s to %s',
                          listen_path, dest_path)
+
+        return await self.create_unix_server(session_factory, listen_path)
+
+    @async_context_manager
+    async def forward_remote_port_to_path(self, listen_host: str,
+                                          listen_port: int,
+                                          dest_path: str) -> SSHListener:
+        """Set up remote TCP port forwarding to a local UNIX domain socket
+
+           This method is a coroutine which attempts to set up port
+           forwarding from a remote TCP listening port to a local UNIX
+           domain socket path via the SSH connection. If the request is
+           successful, the return value is an :class:`SSHListener` object
+           which can be used later to shut down the port forwarding. If
+           the request fails, `None` is returned.
+
+           :param listen_host:
+               The hostname or address on the remote host to listen on
+           :param listen_port:
+               The port number on the remote host to listen on
+           :param dest_path:
+               The path on the local host to forward connections to
+           :type listen_host: `str`
+           :type listen_port: `int`
+           :type dest_path: `str`
+
+           :returns: :class:`SSHListener`
+
+           :raises: :class:`ChannelListenError` if the listener can't be opened
+
+        """
+
+        def session_factory(_orig_host: str,
+                            _orig_port: int) -> Awaitable[SSHUNIXSession]:
+            """Return an SSHTCPSession used to do remote port forwarding"""
+
+            return cast(Awaitable[SSHUNIXSession],
+                        self.forward_unix_connection(dest_path))
+
+        self.logger.info('Creating remote TCP forwarder from %s to %s',
+                         (listen_host, listen_port), dest_path)
+
+        return await self.create_server(session_factory, listen_host,
+                                        listen_port)
+
+    @async_context_manager
+    async def forward_remote_path_to_port(self, listen_path: str,
+                                          dest_host: str,
+                                          dest_port: int) -> SSHListener:
+        """Set up remote UNIX domain socket forwarding to a local TCP port
+
+           This method is a coroutine which attempts to set up UNIX domain
+           socket forwarding from a remote listening path to a local TCP
+           host and port via the SSH connection. If the request is
+           successful, the return value is an :class:`SSHListener` object
+           which can be used later to shut down the port forwarding. If
+           the request fails, `None` is returned.
+
+           :param listen_path:
+               The path on the remote host to listen on
+           :param dest_host:
+               The hostname or address to forward connections to
+           :param dest_port:
+               The port number to forward connections to
+           :type listen_path: `str`
+           :type dest_host: `str`
+           :type dest_port: `int`
+
+           :returns: :class:`SSHListener`
+
+           :raises: :class:`ChannelListenError` if the listener can't be opened
+
+        """
+
+        def session_factory() -> Awaitable[SSHTCPSession[bytes]]:
+            """Return an SSHUNIXSession used to do remote path forwarding"""
+
+            return cast(Awaitable[SSHTCPSession[bytes]],
+                        self.forward_connection(dest_host, dest_port))
+
+        self.logger.info('Creating remote UNIX forwarder from %s to %s',
+                         listen_path, (dest_host, dest_port))
 
         return await self.create_unix_server(session_factory, listen_path)
 
@@ -7401,8 +7614,8 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
        :type x11_forwarding: `bool`
        :type x11_auth_path: `str`
        :type agent_forwarding: `bool`
-       :type process_factory: `callable`
-       :type session_factory: `callable`
+       :type process_factory: `callable` or coroutine
+       :type session_factory: `callable` or coroutine
        :type encoding: `str` or `None`
        :type errors: `str`
        :type sftp_factory: `callable`
@@ -8010,6 +8223,8 @@ async def listen(host = '', port: DefTuple[int] = (), *,
        :type sock: :class:`socket.socket` or `None`
        :type reuse_address: `bool`
        :type reuse_port: `bool`
+       :type acceptor: `callable` or coroutine
+       :type error_handler: `callable`
        :type config: `list` of `str`
        :type options: :class:`SSHServerConnectionOptions`
 
@@ -8135,6 +8350,8 @@ async def listen_reverse(host = '', port: DefTuple[int] = (), *,
        :type sock: :class:`socket.socket` or `None`
        :type reuse_address: `bool`
        :type reuse_port: `bool`
+       :type acceptor: `callable` or coroutine
+       :type error_handler: `callable`
        :type config: `list` of `str`
        :type options: :class:`SSHClientConnectionOptions`
 
