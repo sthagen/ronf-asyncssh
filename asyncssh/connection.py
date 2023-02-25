@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2022 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2023 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -179,7 +179,6 @@ _ServerFactory = Callable[[], SSHServer]
 _ProtocolFactory = Union[_ClientFactory, _ServerFactory]
 
 _Conn = TypeVar('_Conn', 'SSHClientConnection', 'SSHServerConnection')
-_ConnectionFactory = Callable[[], _Conn]
 
 class _TunnelProtocol(Protocol):
     """Base protocol for connections to tunnel SSH over"""
@@ -269,7 +268,7 @@ _DEFAULT_MAX_LINE_LENGTH = 1024     # 1024 characters
 
 async def _open_proxy(
         loop: asyncio.AbstractEventLoop, command: Sequence[str],
-        conn_factory: _ConnectionFactory[_Conn]) -> _Conn:
+        conn_factory: Callable[[], _Conn]) -> _Conn:
     """Open a tunnel running a proxy command"""
 
     class _ProxyCommandTunnel(asyncio.SubprocessProtocol):
@@ -282,12 +281,6 @@ async def _open_proxy(
             self._stdin: Optional[asyncio.WriteTransport] = None
             self._conn = conn_factory()
             self._close_event = asyncio.Event()
-
-        def set_protocol(self, protocol: asyncio.BaseProtocol) -> None:
-            """Changing the protocol is ignored here"""
-
-        def get_protocol(self) -> asyncio.BaseProtocol:
-            """Changing the protocol is ignored here"""
 
         def get_extra_info(self, name: str, default: Any = None) -> Any:
             """Return extra information associated with this tunnel"""
@@ -382,7 +375,7 @@ async def _open_tunnel(tunnel: object, passphrase: Optional[BytesOrStr]) -> \
 async def _connect(options: 'SSHConnectionOptions',
                    loop: asyncio.AbstractEventLoop, flags: int,
                    sock: Optional[socket.socket],
-                   conn_factory: _ConnectionFactory[_Conn], msg: str) -> _Conn:
+                   conn_factory: Callable[[], _Conn], msg: str) -> _Conn:
     """Make outbound TCP or SSH tunneled connection"""
 
     host = options.host
@@ -461,7 +454,7 @@ async def _listen(options: 'SSHConnectionOptions',
                   loop: asyncio.AbstractEventLoop, flags: int,
                   backlog: int, sock: Optional[socket.socket],
                   reuse_address: bool, reuse_port: bool,
-                  conn_factory: _ConnectionFactory[_Conn],
+                  conn_factory: Callable[[], _Conn],
                   msg: str) -> 'SSHAcceptor':
     """Make inbound TCP or SSH tunneled listener"""
 
@@ -1053,7 +1046,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self.internal_error(error_logger=task_logger)
 
     def create_task(self, coro: Awaitable[None],
-                    task_logger: SSHLogger = None) -> 'asyncio.Task[None]':
+                    task_logger: Optional[SSHLogger] = None) -> \
+            'asyncio.Task[None]':
         """Create an asynchronous task which catches and reports errors"""
 
         task = asyncio.ensure_future(coro)
@@ -1543,7 +1537,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         return True
 
     def send_packet(self, pkttype: int, *args: bytes,
-                    handler: SSHPacketLogger = None) -> None:
+                    handler: Optional[SSHPacketLogger] = None) -> None:
         """Send an SSH packet"""
 
         if (self._auth_complete and self._kex_complete and
@@ -1825,7 +1819,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 self._get_userauth_request_packet(method, args))
 
     def send_userauth_packet(self, pkttype: int, *args: bytes,
-                             handler: SSHPacketLogger = None,
+                             handler: Optional[SSHPacketLogger] = None,
                              trivial: bool = True) -> None:
         """Send a user authentication packet"""
 
@@ -4245,9 +4239,10 @@ class SSHClientConnection(SSHConnection):
 
     @async_context_manager
     async def create_server(
-            self, session_factory: TCPListenerFactory, listen_host: str,
-            listen_port: int, *, encoding: Optional[str] = None,
-            errors: str = 'strict', window: int = _DEFAULT_WINDOW,
+            self, session_factory: TCPListenerFactory[AnyStr],
+            listen_host: str, listen_port: int, *,
+            encoding: Optional[str] = None, errors: str = 'strict',
+            window: int = _DEFAULT_WINDOW,
             max_pktsize: int = _DEFAULT_MAX_PKTSIZE) -> SSHListener:
         """Create a remote SSH TCP listener
 
@@ -7079,7 +7074,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
                 server_host_key_algs: _AlgsArg = (),
                 username: DefTuple[str] = (), password: Optional[str] = None,
                 client_host_keysign: DefTuple[KeySignPath] = (),
-                client_host_keys: _ClientKeysArg = None,
+                client_host_keys: Optional[_ClientKeysArg] = None,
                 client_host_certs: Sequence[FilePath] = (),
                 client_host: Optional[str] = None,
                 client_username: DefTuple[str] = (),
