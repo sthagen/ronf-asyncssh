@@ -664,7 +664,7 @@ class SSHAcceptor:
 
        This class in a wrapper around an :class:`asyncio.Server` listener
        which provides the ability to update the the set of SSH client or
-       server connection options associated wtih that listener. This is
+       server connection options associated with that listener. This is
        accomplished by calling the :meth:`update` method, which takes the
        same keyword arguments as the :class:`SSHClientConnectionOptions`
        and :class:`SSHServerConnectionOptions` classes.
@@ -1988,10 +1988,11 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                         packet: SSHPacket) -> None:
         """Process an ignore message"""
 
-        # pylint: disable=no-self-use
-
-        _ = packet.get_string()     # data
-        packet.check_end()
+        # Work around missing payload bytes in an ignore message
+        # in some Cisco SSH servers
+        if b'Cisco' not in self._server_version: # pragma: no branch
+            _ = packet.get_string()     # data
+            packet.check_end()
 
     def _process_unimplemented(self, _pkttype: int, _pktid: int,
                                packet: SSHPacket) -> None:
@@ -2544,7 +2545,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         """Forcibly close the SSH connection
 
            This method closes the SSH connection immediately, without
-           waiting for pending operations to complete and wihtout sending
+           waiting for pending operations to complete and without sending
            an explicit SSH disconnect message. Buffered data waiting to be
            sent will be lost and no more data will be received. When the
            the connection is closed, :meth:`connection_lost()
@@ -3073,6 +3074,7 @@ class SSHClientConnection(SSHConnection):
 
         self._client_keys: List[SSHKeyPair] = \
             list(options.client_keys) if options.client_keys else []
+        self._saved_rsa_key: Optional[_ClientHostKey] = None
 
         if options.preferred_auth != ():
             self._preferred_auth = [method.encode('ascii') for method in
@@ -3313,24 +3315,39 @@ class SSHClientConnection(SSHConnection):
         if not self._host_based_auth:
             return None, '', ''
 
+        key: Optional[_ClientHostKey]
+
         while True:
-            try:
-                key: Optional[_ClientHostKey] = self._client_host_keys.pop(0)
-            except IndexError:
-                key = None
-                break
+            if self._saved_rsa_key:
+                key = self._saved_rsa_key
+                key.algorithm = key.sig_algorithm + b'-cert-v01@openssh.com'
+                self._saved_rsa_key = None
+            else:
+                try:
+                    key = self._client_host_keys.pop(0)
+                except IndexError:
+                    key = None
+                    break
 
             assert key is not None
 
             if self._choose_signature_alg(key):
+                if key.algorithm == b'ssh-rsa-cert-v01@openssh.com' and \
+                        key.sig_algorithm != b'ssh-rsa':
+                    self._saved_rsa_key = key
+
                 break
 
         client_host = self._options.client_host
 
         if client_host is None:
-            client_host, _ = await self._loop.getnameinfo(
-                cast(SockAddr, self.get_extra_info('sockname')),
-                socket.NI_NUMERICSERV)
+            sockname = self.get_extra_info('sockname')
+
+            if sockname:
+                client_host, _ = await self._loop.getnameinfo(
+                    cast(SockAddr, sockname), socket.NI_NUMERICSERV)
+            else:
+                client_host = ''
 
         # Add a trailing '.' to the client host to be compatible with
         # ssh-keysign from OpenSSH
@@ -3377,10 +3394,33 @@ class SSHClientConnection(SSHConnection):
 
                 self._client_keys = list(load_keypairs(result))
 
-            keypair = self._client_keys.pop(0)
+            # OpenSSH versions before 7.8 didn't support RSA SHA-2
+            # signature names in certificate key types, requiring the
+            # use of ssh-rsa-cert-v01@openssh.com as the key type even
+            # when using SHA-2 signatures. However, OpenSSL 8.8 and
+            # later reject ssh-rsa-cert-v01@openssh.com as a key type
+            # by default, requiring that the RSA SHA-2 version of the key
+            # type be used. This makes it difficult to use RSA keys with
+            # certificates without knowing the version of the remote
+            # server and which key types it will accept.
+            #
+            # The code below works around this by trying multiple key
+            # types during public key and host-based authentication when
+            # using SHA-2 signatures with RSA keys signed by certificates.
 
-            if self._choose_signature_alg(keypair):
-                return keypair
+            if self._saved_rsa_key:
+                key = self._saved_rsa_key
+                key.algorithm = key.sig_algorithm + b'-cert-v01@openssh.com'
+                self._saved_rsa_key = None
+            else:
+                key = self._client_keys.pop(0)
+
+            if self._choose_signature_alg(key):
+                if key.algorithm == b'ssh-rsa-cert-v01@openssh.com' and \
+                        key.sig_algorithm != b'ssh-rsa':
+                    self._saved_rsa_key = key
+
+                return key
 
     async def password_auth_requested(self) -> Optional[str]:
         """Return a password to authenticate with"""
@@ -5182,7 +5222,7 @@ class SSHServerConnection(SSHConnection):
         self._keepalive_interval = options.keepalive_interval
 
     def choose_server_host_key(self,
-                                peer_host_key_algs: Sequence[bytes]) -> bool:
+                               peer_host_key_algs: Sequence[bytes]) -> bool:
         """Choose the server host key to use
 
            Given a list of host key algorithms supported by the client,
@@ -6723,7 +6763,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :param password_auth: (optional)
            Whether or not to allow password authentication. By default,
            password authentication is enabled if a password is specified
-           or if callbacks to provide a password are made availble.
+           or if callbacks to provide a password are made available.
        :param gss_host: (optional)
            The principal name to use for the host in GSS key exchange and
            authentication. If not specified, this value will be the same
@@ -6913,7 +6953,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options.
 
                .. note:: Specifying configuration files when creating an
@@ -7372,7 +7412,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
            client connected from.
        :param authorized_client_keys: (optional)
            A list of authorized user and CA public keys which should be
-           trusted for certifcate-based client public key authentication.
+           trusted for certificate-based client public key authentication.
        :param x509_trusted_certs: (optional)
            A list of certificates which should be trusted for X.509 client
            certificate authentication. If this argument is explicitly set
@@ -7562,7 +7602,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
        :param config: (optional)
            Paths to OpenSSH server configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options.
 
                .. note:: Specifying configuration files when creating an
@@ -7850,7 +7890,7 @@ async def run_client(sock: socket.socket, config: DefTuple[ConfigPaths] = (),
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. If no paths are specified and
            no config paths were set when constructing the `options`
            argument (if any), an attempt will be made to load the
@@ -7904,7 +7944,7 @@ async def run_server(sock: socket.socket, config: DefTuple[ConfigPaths] = (),
        :param config: (optional)
            Paths to OpenSSH server configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. By default, no OpenSSH
            configuration files will be loaded. See
            :ref:`SupportedServerConfigOptions` for details on what
@@ -7985,6 +8025,17 @@ async def connect(host = '', port: DefTuple[int] = (), *,
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param family: (optional)
            The address family to use when creating the socket. By default,
            the address family is automatically selected based on the host.
@@ -7999,7 +8050,7 @@ async def connect(host = '', port: DefTuple[int] = (), *,
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. If no paths are specified and
            no config paths were set when constructing the `options`
            argument (if any), an attempt will be made to load the
@@ -8080,6 +8131,17 @@ async def connect_reverse(
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param family: (optional)
            The address family to use when creating the socket. By default,
            the address family is automatically selected based on the host.
@@ -8094,7 +8156,7 @@ async def connect_reverse(
        :param config: (optional)
            Paths to OpenSSH server configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. By default, no OpenSSH
            configuration files will be loaded. See
            :ref:`SupportedServerConfigOptions` for details on what
@@ -8166,6 +8228,17 @@ async def listen(host = '', port: DefTuple[int] = (), *,
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param family: (optional)
            The address family to use when creating the server. By default,
            the address families are automatically selected based on the host.
@@ -8200,7 +8273,7 @@ async def listen(host = '', port: DefTuple[int] = (), *,
        :param config: (optional)
            Paths to OpenSSH server configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. By default, no OpenSSH
            configuration files will be loaded. See
            :ref:`SupportedServerConfigOptions` for details on what
@@ -8289,6 +8362,17 @@ async def listen_reverse(host = '', port: DefTuple[int] = (), *,
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param family: (optional)
            The address family to use when creating the server. By default,
            the address families are automatically selected based on the host.
@@ -8322,7 +8406,7 @@ async def listen_reverse(host = '', port: DefTuple[int] = (), *,
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. If no paths are specified and
            no config paths were set when constructing the `options`
            argument (if any), an attempt will be made to load the
@@ -8459,6 +8543,17 @@ async def get_server_host_key(
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param proxy_command: (optional)
            A string or list of strings specifying a command and arguments
            to run to make a connection to the SSH server. Data will be
@@ -8489,7 +8584,7 @@ async def get_server_host_key(
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. If no paths are specified and
            no config paths were set when constructing the `options`
            argument (if any), an attempt will be made to load the
@@ -8590,6 +8685,17 @@ async def get_server_auth_methods(
            [user@]host[:port] may also be specified, in which case a
            connection will first be made to that host and it will then be
            used as a tunnel.
+
+               .. note:: When specifying tunnel as a string, any config
+                         options in the call will apply only when opening
+                         the connection inside the tunnel. The tunnel
+                         itself will be opened with default configuration
+                         settings or settings in the default config file.
+                         To get more control of config settings used to
+                         open the tunnel, :func:`connect` can be called
+                         explicitly, and the resulting client connection
+                         can be passed as the tunnel argument.
+
        :param proxy_command: (optional)
            A string or list of strings specifying a command and arguments
            to run to make a connection to the SSH server. Data will be
@@ -8620,7 +8726,7 @@ async def get_server_auth_methods(
        :param config: (optional)
            Paths to OpenSSH client configuration files to load. This
            configuration will be used as a fallback to override the
-           defaults for settings which are not explcitly specified using
+           defaults for settings which are not explicitly specified using
            AsyncSSH's configuration options. If no paths are specified and
            no config paths were set when constructing the `options`
            argument (if any), an attempt will be made to load the

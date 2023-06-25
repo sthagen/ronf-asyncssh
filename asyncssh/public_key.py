@@ -70,6 +70,7 @@ _Time = Union[int, float, datetime, str]
 _PubKeyAlgMap = Dict[bytes, Type['SSHKey']]
 _CertAlgMap = Dict[bytes, Tuple[Optional[Type['SSHKey']],
                                 Type['SSHCertificate']]]
+_CertSigAlgMap = Dict[bytes, bytes]
 _CertVersionMap = Dict[Tuple[bytes, int],
                        Tuple[bytes, Type['SSHOpenSSHCertificate']]]
 
@@ -128,6 +129,7 @@ _default_x509_certificate_algs: List[bytes] = []
 
 _public_key_alg_map: _PubKeyAlgMap = {}
 _certificate_alg_map: _CertAlgMap = {}
+_certificate_sig_alg_map: _CertSigAlgMap = {}
 _certificate_version_map: _CertVersionMap = {}
 _pem_map: _PEMMap = {}
 _pkcs8_oid_map: _PKCS8OIDMap = {}
@@ -238,6 +240,7 @@ class SSHKey:
 
     algorithm: bytes = b''
     sig_algorithms: Sequence[bytes] = ()
+    cert_algorithms: Sequence[bytes] = ()
     x509_algorithms: Sequence[bytes] = ()
     all_sig_algorithms: Set[bytes] = set()
     default_x509_hash: str = ''
@@ -647,7 +650,7 @@ class SSHKey:
             comment: DefTuple[_Comment] = ()) -> 'SSHOpenSSHCertificate':
         """Generate a new SSH user certificate
 
-           This method returns an SSH user certifcate with the requested
+           This method returns an SSH user certificate with the requested
            attributes signed by this private key.
 
            :param user_key:
@@ -766,7 +769,7 @@ class SSHKey:
             'SSHOpenSSHCertificate':
         """Generate a new SSH host certificate
 
-           This method returns an SSH host certifcate with the requested
+           This method returns an SSH host certificate with the requested
            attributes signed by this private key.
 
            :param host_key:
@@ -827,7 +830,7 @@ class SSHKey:
             comment: DefTuple[_Comment] = ()) -> 'SSHX509Certificate':
         """Generate a new X.509 user certificate
 
-           This method returns an X.509 user certifcate with the requested
+           This method returns an X.509 user certificate with the requested
            attributes signed by this private key.
 
            :param user_key:
@@ -898,7 +901,7 @@ class SSHKey:
             comment: DefTuple[_Comment] = ()) -> 'SSHX509Certificate':
         """Generate a new X.509 host certificate
 
-           This method returns a X.509 host certifcate with the requested
+           This method returns an X.509 host certificate with the requested
            attributes signed by this private key.
 
            :param host_key:
@@ -969,7 +972,7 @@ class SSHKey:
             'SSHX509Certificate':
         """Generate a new X.509 CA certificate
 
-           This method returns a X.509 CA certifcate with the requested
+           This method returns an X.509 CA certificate with the requested
            attributes signed by this private key.
 
            :param ca_key:
@@ -1557,7 +1560,8 @@ class SSHOpenSSHCertificate(SSHCertificate):
                  signing_key: SSHKey, serial: int, cert_type: int,
                  key_id: str, valid_after: int, valid_before: int,
                  comment: _Comment):
-        super().__init__(algorithm, key.sig_algorithms, (algorithm,),
+        super().__init__(algorithm, key.sig_algorithms,
+                         key.cert_algorithms or (algorithm,),
                          key, data, comment)
 
         self.principals = principals
@@ -2183,6 +2187,11 @@ class SSHKeyPair:
     def set_sig_algorithm(self, sig_algorithm: bytes) -> None:
         """Set the signature algorithm to use when signing data"""
 
+        try:
+            sig_algorithm = _certificate_sig_alg_map[sig_algorithm]
+        except KeyError:
+            pass
+
         self.sig_algorithm = sig_algorithm
 
         if not self._cert:
@@ -2192,11 +2201,6 @@ class SSHKeyPair:
 
             cert = cast('SSHX509CertificateChain', self._cert)
             self.public_data = cert.adjust_public_data(sig_algorithm)
-        else:
-            if sig_algorithm.endswith(b'@openssh.com'):
-                sig_algorithm = sig_algorithm[:-12]
-
-            self.algorithm = sig_algorithm + b'-cert-v01@openssh.com'
 
     def sign(self, data: bytes) -> bytes:
         """Sign a block of data with this private key"""
@@ -2923,6 +2927,8 @@ def register_certificate_alg(version: int, algorithm: bytes,
         _default_certificate_algs.append(cert_algorithm)
 
     _certificate_alg_map[cert_algorithm] = (key_handler, cert_handler)
+
+    _certificate_sig_alg_map[cert_algorithm] = algorithm
 
     _certificate_version_map[algorithm, version] = \
         (cert_algorithm, cert_handler)

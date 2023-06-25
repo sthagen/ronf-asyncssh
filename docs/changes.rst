@@ -3,6 +3,31 @@
 Change Log
 ==========
 
+Release 2.13.2 (21 Jun 2023)
+----------------------------
+
+* Fixed an issue with host-based authentication when using proxy_command,
+  allowing it to be used if the caller explicitly specifies client_host.
+  Thanks go to GitHub user yuqingm7 for reporting this issue.
+
+* Improved handling of signature algorithms for OpenSSH certificates
+  so that RSA SHA-2 signatures will work with both older and newer
+  versions of OpenSSH.
+
+* Worked around an issue with some Cisco SSH implementations generating
+  invalid "ignore" packets. Thanks go to Jost Luebbe for reporting and
+  helping to debug this issue.
+
+* Fixed unit tests to avoid errors when cryptography's version of
+  OpenSSL disables support for SHA-1 signatures.
+
+* Fixed unit tests to avoid errors when the filesystem enforces that
+  filenames be valid UTF-8 strings. Thanks go to Robert Schütz and
+  Martin Weinelt for reporting this issue.
+
+* Added documentation about which config options apply when passing
+  a string as a tunnel argument.
+
 Release 2.13.1 (18 Feb 2023)
 ----------------------------
 
@@ -100,7 +125,7 @@ Release 2.12.0 (10 Aug 2022)
 
 * Updated default for "ignore_encrypted" client connection option to
   ignore encrypted keys specified in an OpenSSH config file when no
-  passphrase is provided, similar to what was previosuly done for
+  passphrase is provided, similar to what was previously done for
   keys with default names.
 
 * Fixed an issue when using an SSH agent with RSA keys and an X.509
@@ -343,7 +368,7 @@ Release 2.7.1 (6 Sep 2021)
 * Fixed a couple of issues related to sending SSH_EXT_INFO messages.
 
 * Fixed an issue with using SSHAcceptor as an async context manager.
-  Thanks go to Paulo Costa for reporing this.
+  Thanks go to Paulo Costa for reporting this.
 
 * Fixed an issue where a tunnel wasn't always cleaned up properly when
   creating a remote listener.
@@ -463,7 +488,7 @@ Release 2.6.0 (1 May 2021)
   0.8.1.
 
 * Fixed problem with setting config options with percent substitutions
-  to 'none'. Percent subsitution should not be performed in this case.
+  to 'none'. Percent substitution should not be performed in this case.
   Thanks go to Yuqing Miao for finding and reporting this issue!
 
 * Fixed return type of filenames in SFTPClient scandir() and readlink()
@@ -956,7 +981,7 @@ Release 1.16.1 (30 Mar 2019)
 * Added channel, connection, and env properties to SFTPServer instances,
   so connection and channel information can be used to influence the
   SFTP server's behavior. Previously, connection information was made
-  avaiable through the constructor, but channel and environment
+  available through the constructor, but channel and environment
   information was not. Now, all of these are available as properties
   on the SFTPServer instance without the need to explicitly store anything
   in a custom constructor.
@@ -1319,7 +1344,7 @@ Release 1.12.0 (5 Feb 2018)
 
 * Updated key and certificate comment handling to be less sensitive to
   the encoding of non-ASCII characters. The get_comment() and set_comment()
-  functions now take an optional encoding paramter, defaulting to UTF-8
+  functions now take an optional encoding parameter, defaulting to UTF-8
   but allowing for others encodings. There's also a get_comment_bytes()
   function to get the comment data as bytes without performing Unicode
   decoding.
@@ -1568,7 +1593,7 @@ Release 1.7.0 (7 Oct 2016)
   these signature algorithms.
 
 * Added new load_keypairs and load_public_keys API functions which
-  support expicitly loading keys using the same syntax that was
+  support explicitly loading keys using the same syntax that was
   previously available for specifying client_keys, authorized_client_keys,
   and server_host_keys arguments when creating SSH clients and servers.
 

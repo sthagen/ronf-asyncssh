@@ -25,7 +25,6 @@ from copy import copy
 import os
 from pathlib import Path
 import socket
-import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -51,15 +50,8 @@ from asyncssh.public_key import get_default_x509_certificate_algs
 
 from .server import Server, ServerTestCase
 
-from .util import asynctest, gss_available, patch_gss, run
+from .util import asynctest, gss_available, nc_available, patch_gss
 from .util import patch_getnameinfo, x509_available
-
-
-try:
-    run('which nc')
-    _nc_available = True
-except subprocess.CalledProcessError: # pragma: no cover
-    _nc_available = False
 
 
 class _CheckAlgsClientConnection(asyncssh.SSHClientConnection):
@@ -421,7 +413,7 @@ class _TestConnection(ServerTestCase):
 
     @asynctest
     async def test_connect_encrypted_key(self):
-        """Test connecting with encrytped client key and no passphrase"""
+        """Test connecting with encrypted client key and no passphrase"""
 
         async with self.connect(client_keys='ckey_encrypted',
                                 ignore_encrypted=True):
@@ -609,7 +601,7 @@ class _TestConnection(ServerTestCase):
         with self.assertRaises(OSError):
             await asyncssh.get_server_host_key('\xff')
 
-    @unittest.skipUnless(_nc_available, 'Netcat not available')
+    @unittest.skipUnless(nc_available, 'Netcat not available')
     @asynctest
     async def test_get_server_host_key_proxy(self):
         """Test retrieving a server host key using proxy command"""
@@ -621,12 +613,12 @@ class _TestConnection(ServerTestCase):
 
         self.assertEqual(key, keylist[0])
 
-    @unittest.skipUnless(_nc_available, 'Netcat not available')
+    @unittest.skipUnless(nc_available, 'Netcat not available')
     @asynctest
     async def test_get_server_host_key_proxy_failure(self):
         """Test failure retrieving a server host key using proxy command"""
 
-        # Leave out arguments to 'nc' to trigger a faliure
+        # Leave out arguments to 'nc' to trigger a failure
         proxy_command = 'nc'
 
         with self.assertRaises((OSError, asyncssh.ConnectionLost)):
@@ -866,7 +858,7 @@ class _TestConnection(ServerTestCase):
 
     @asynctest
     async def test_duplicate_encryption_algs(self):
-        """Test connecting with an duplicated encryption algorithm"""
+        """Test connecting with a duplicated encryption algorithm"""
 
         with patch('asyncssh.connection.SSHClientConnection',
                    _CheckAlgsClientConnection):
@@ -1624,7 +1616,7 @@ class _TestConnectionReverse(ServerTestCase):
         async with self.run_server(sock):
             pass
 
-    @unittest.skipUnless(_nc_available, 'Netcat not available')
+    @unittest.skipUnless(nc_available, 'Netcat not available')
     @asynctest
     async def test_connect_reverse_proxy(self):
         """Test reverse direction SSH connection with proxy command"""
@@ -1788,14 +1780,14 @@ class _TestServerX509Self(ServerTestCase):
 
     @asynctest
     async def test_connect_x509_untrusted_self(self):
-        """Test connecting with untrusted X.509 self-signed certficate"""
+        """Test connecting with untrusted X.509 self-signed certificate"""
 
         with self.assertRaises(asyncssh.HostKeyNotVerifiable):
             await self.connect(x509_trusted_certs='root_ca_cert.pem')
 
     @asynctest
     async def test_connect_x509_revoked_self(self):
-        """Test connecting with revoked X.509 self-signed certficate"""
+        """Test connecting with revoked X.509 self-signed certificate"""
 
         with self.assertRaises(asyncssh.HostKeyNotVerifiable):
             await self.connect(known_hosts=([], [], [], ['root_ca_cert.pem'],
@@ -1991,11 +1983,9 @@ class _TestServerWithoutCert(ServerTestCase):
 
             return _ValidateHostKeyClient(host_key='skey.pub')
 
-        algs = [asyncssh.read_public_key('skey.pub').get_algorithm()]
-
-        conn, _ = await self.create_connection(client_factory,
-                                               known_hosts=([], [], []),
-                                               server_host_key_algs=algs)
+        conn, _ = await self.create_connection(
+            client_factory, known_hosts=([], [], []),
+            server_host_key_algs=['rsa-sha2-256'])
 
         async with conn:
             pass

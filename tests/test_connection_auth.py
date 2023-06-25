@@ -26,6 +26,8 @@ import unittest
 
 from unittest.mock import patch
 
+from cryptography.exceptions import UnsupportedAlgorithm
+
 import asyncssh
 from asyncssh.misc import async_context_manager, write_file
 from asyncssh.packet import String
@@ -34,7 +36,7 @@ from asyncssh.public_key import CERT_TYPE_USER, CERT_TYPE_HOST
 from .keysign_stub import create_subprocess_exec_stub
 from .server import Server, ServerTestCase
 from .util import asynctest, gss_available, patch_getnameinfo, patch_gss
-from .util import make_certificate, x509_available
+from .util import make_certificate, nc_available, x509_available
 
 
 class _FailValidateHostSSHServerConnection(asyncssh.SSHServerConnection):
@@ -658,6 +660,17 @@ class _TestHostBasedAuth(ServerTestCase):
 
         self.assertEqual(auth_methods, ['hostbased'])
 
+    @unittest.skipUnless(nc_available, 'Netcat not available')
+    @asynctest
+    async def test_get_server_auth_methods_no_sockname(self):
+        """Test getting auth methods from the test server"""
+
+        proxy_command = ('nc', str(self._server_addr), str(self._server_port))
+
+        with self.assertRaises(asyncssh.PermissionDenied):
+            await self.connect(username='user', client_host_keys='skey',
+                               proxy_command=proxy_command)
+
     @asynctest
     async def test_client_host_auth(self):
         """Test connecting with host-based authentication"""
@@ -709,7 +722,7 @@ class _TestHostBasedAuth(ServerTestCase):
     async def test_client_host_signature_algs(self):
         """Test host based authentication with specific signature algorithms"""
 
-        for alg in ('ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'):
+        for alg in ('rsa-sha2-256', 'rsa-sha2-512'):
             async with self.connect(username='user', client_host_keys='skey',
                                     client_username='user',
                                     signature_algs=[alg]):
@@ -728,8 +741,12 @@ class _TestHostBasedAuth(ServerTestCase):
 
         with patch('asyncssh.connection.SSHConnection._get_ext_info_kex_alg',
                    skip_ext_info):
-            async with self.connect(username='user', client_host_keys='skey',
-                                    client_username='user'):
+            try:
+                async with self.connect(username='user',
+                                        client_host_keys='skey',
+                                        client_username='user'):
+                    pass
+            except UnsupportedAlgorithm: # pragma: no cover
                 pass
 
     @asynctest
@@ -889,8 +906,8 @@ class _TestKeysignHostBasedAuth(ServerTestCase):
     async def start_server(cls):
         """Start an SSH server which supports host-based authentication"""
 
-        return await cls.create_server(_HostBasedServer,
-                                       known_client_hosts='known_hosts')
+        return await cls.create_server(
+            _HostBasedServer, known_client_hosts=(['skey_ecdsa.pub'], [], []))
 
     @async_context_manager
     async def _connect_keysign(self, client_host_keysign=True,
@@ -902,7 +919,7 @@ class _TestKeysignHostBasedAuth(ServerTestCase):
             with patch('asyncssh.keysign._DEFAULT_KEYSIGN_DIRS', keysign_dirs):
                 with patch('asyncssh.public_key._DEFAULT_HOST_KEY_DIRS', ['.']):
                     with patch('asyncssh.public_key._DEFAULT_HOST_KEY_FILES',
-                               ['skey', 'xxx']):
+                               ['skey_ecdsa', 'xxx']):
                         return await self.connect(
                             username='user',
                             client_host_keysign=client_host_keysign,
@@ -927,7 +944,7 @@ class _TestKeysignHostBasedAuth(ServerTestCase):
     async def test_keysign_explicit_host_keys(self):
         """Test ssh-keysign with explicit host public keys"""
 
-        async with self._connect_keysign(client_host_keys='skey.pub'):
+        async with self._connect_keysign(client_host_keys='skey_ecdsa.pub'):
             pass
 
     @asynctest
@@ -1022,9 +1039,12 @@ class _TestLimitedHostBasedSignatureAlgs(ServerTestCase):
     async def test_host_signature_alg_fallback(self):
         """Test fall back to default host key signature algorithm"""
 
-        async with self.connect(username='ckey', client_host_keys='skey',
-                                client_username='user',
-                                signature_algs=['rsa-sha2-256', 'ssh-rsa']):
+        try:
+            async with self.connect(username='ckey', client_host_keys='skey',
+                                    client_username='user',
+                                    signature_algs=['rsa-sha2-256', 'ssh-rsa']):
+                pass
+        except UnsupportedAlgorithm: # pragma: no cover
             pass
 
 
@@ -1209,7 +1229,7 @@ class _TestPublicKeyAuth(ServerTestCase):
     async def test_public_key_signature_algs(self):
         """Test public key authentication with specific signature algorithms"""
 
-        for alg in ('ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512'):
+        for alg in ('rsa-sha2-256', 'rsa-sha2-512'):
             async with self.connect(username='ckey', agent_path=None,
                                     client_keys='ckey', signature_algs=[alg]):
                 pass
@@ -1227,8 +1247,11 @@ class _TestPublicKeyAuth(ServerTestCase):
 
         with patch('asyncssh.connection.SSHConnection._get_ext_info_kex_alg',
                    skip_ext_info):
-            async with self.connect(username='ckey', client_keys='ckey',
-                                    agent_path=None):
+            try:
+                async with self.connect(username='ckey', client_keys='ckey',
+                                        agent_path=None):
+                    pass
+            except UnsupportedAlgorithm: # pragma: no cover
                 pass
 
     @asynctest
@@ -1949,7 +1972,7 @@ class _TestKbdintAuth(ServerTestCase):
             pass
 
     @asynctest
-    async def test_kbdint_auth_callback_faliure(self):
+    async def test_kbdint_auth_callback_failure(self):
         """Test failure connecting with keyboard-interactive auth callback"""
 
         with self.assertRaises(asyncssh.PermissionDenied):
