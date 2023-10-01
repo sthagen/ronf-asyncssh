@@ -44,6 +44,7 @@ from .forward import SSHForwarder
 
 from .connection import SSHAcceptor, SSHClientConnection, SSHServerConnection
 from .connection import SSHClientConnectionOptions, SSHServerConnectionOptions
+from .connection import SSHAcceptHandler
 from .connection import create_connection, create_server, connect, listen
 from .connection import connect_reverse, listen_reverse, get_server_host_key
 from .connection import get_server_auth_methods, run_client, run_server
@@ -85,6 +86,8 @@ from .public_key import read_private_key_list, read_public_key_list
 from .public_key import read_certificate_list
 from .public_key import load_keypairs, load_public_keys, load_certificates
 from .public_key import load_resident_keys
+
+from .rsa import set_default_skip_rsa_key_validation
 
 from .scp import scp
 
@@ -164,5 +167,5 @@ __all__ = [
     'read_certificate_list', 'read_known_hosts', 'read_private_key',
     'read_private_key_list', 'read_public_key', 'read_public_key_list',
     'run_client', 'run_server', 'scp', 'set_debug_level', 'set_log_level',
-    'set_sftp_log_level',
+    'set_sftp_log_level', 'set_default_skip_rsa_key_validation',
 ]

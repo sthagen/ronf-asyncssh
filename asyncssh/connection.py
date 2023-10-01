@@ -233,6 +233,7 @@ _TunnelListener = Union[None, str, _TunnelListenerProtocol]
 
 _VersionArg = DefTuple[BytesOrStr]
 
+SSHAcceptHandler = Callable[[str, int], MaybeAwait[bool]]
 
 # SSH service names
 _USERAUTH_SERVICE = b'ssh-userauth'
@@ -2886,10 +2887,10 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         return SSHForwarder(cast(SSHForwarder, peer))
 
     @async_context_manager
-    async def forward_local_port(self, listen_host: str,
-                                 listen_port: int,
-                                 dest_host: str,
-                                 dest_port: int) -> SSHListener:
+    async def forward_local_port(
+            self, listen_host: str, listen_port: int,
+            dest_host: str, dest_port: int,
+            accept_handler: Optional[SSHAcceptHandler] = None) -> SSHListener:
         """Set up local port forwarding
 
            This method is a coroutine which attempts to set up port
@@ -2906,10 +2907,17 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                The hostname or address to forward the connections to
            :param dest_port:
                The port number to forward the connections to
+           :param accept_handler:
+               A `callable` or coroutine which takes arguments of the
+               original host and port of the client and decides whether
+               or not to allow connection forwarding, returning `True` to
+               accept the connection and begin forwarding or `False` to
+               reject and close it.
            :type listen_host: `str`
            :type listen_port: `int`
            :type dest_host: `str`
            :type dest_port: `int`
+           :type accept_handler: `callable` or coroutine
 
            :returns: :class:`SSHListener`
 
@@ -2922,6 +2930,21 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 orig_host: str, orig_port: int) -> \
                     Tuple[SSHTCPChannel[bytes], SSHTCPSession[bytes]]:
             """Forward a local connection over SSH"""
+
+            if accept_handler:
+                result = accept_handler(orig_host, orig_port)
+
+                if inspect.isawaitable(result):
+                    result = await cast(Awaitable[bool], result)
+
+                if not result:
+                    self.logger.info('Request for TCP forwarding from '
+                                     '%s to %s denied by application',
+                                     (orig_host, orig_port),
+                                     (dest_host, dest_port))
+
+                    raise ChannelOpenError(OPEN_ADMINISTRATIVELY_PROHIBITED,
+                                           'Connection forwarding denied')
 
             return (await self.create_connection(session_factory,
                                                  dest_host, dest_port,
@@ -3240,7 +3263,12 @@ class SSHClientConnection(SSHConnection):
                 self._host_key_alias or self._host,
                 self._peer_addr, self._port, key_data)
         except ValueError as exc:
-            raise HostKeyNotVerifiable(str(exc)) from None
+            host = self._host
+
+            if self._host_key_alias:
+                host += f' with alias {self._host_key_alias}'
+
+            raise HostKeyNotVerifiable(f'{exc} for host {host}') from None
 
         self._server_host_key = host_key
         return host_key
@@ -3288,7 +3316,9 @@ class SSHClientConnection(SSHConnection):
 
         self.logger.info('Auth failed for user %s', self._username)
 
-        self._force_close(PermissionDenied('Permission denied'))
+        self._force_close(PermissionDenied('Permission denied for user '
+                                           f'{self._username} on host '
+                                           f'{self._host}'))
 
     def gss_kex_auth_requested(self) -> bool:
         """Return whether to allow GSS key exchange authentication or not"""
@@ -4688,9 +4718,9 @@ class SSHClientConnection(SSHConnection):
                                     **kwargs) # type: ignore
 
     @async_context_manager
-    async def forward_local_port_to_path(self, listen_host: str,
-                                         listen_port: int,
-                                         dest_path: str) -> SSHListener:
+    async def forward_local_port_to_path(
+            self, listen_host: str, listen_port: int, dest_path: str,
+            accept_handler: Optional[SSHAcceptHandler] = None) -> SSHListener:
         """Set up local TCP port forwarding to a remote UNIX domain socket
 
            This method is a coroutine which attempts to set up port
@@ -4705,9 +4735,16 @@ class SSHClientConnection(SSHConnection):
                The port number on the local host to listen on
            :param dest_path:
                The path on the remote host to forward the connections to
+           :param accept_handler:
+               A `callable` or coroutine which takes arguments of the
+               original host and port of the client and decides whether
+               or not to allow connection forwarding, returning `True` to
+               accept the connection and begin forwarding or `False` to
+               reject and close it.
            :type listen_host: `str`
            :type listen_port: `int`
            :type dest_path: `str`
+           :type accept_handler: `callable` or coroutine
 
            :returns: :class:`SSHListener`
 
@@ -4717,9 +4754,23 @@ class SSHClientConnection(SSHConnection):
 
         async def tunnel_connection(
                 session_factory: SSHUNIXSessionFactory[bytes],
-                _orig_host: str, _orig_port: int) -> \
+                orig_host: str, orig_port: int) -> \
                     Tuple[SSHUNIXChannel[bytes], SSHUNIXSession[bytes]]:
             """Forward a local connection over SSH"""
+
+            if accept_handler:
+                result = accept_handler(orig_host, orig_port)
+
+                if inspect.isawaitable(result):
+                    result = await cast(Awaitable[bool], result)
+
+                if not result:
+                    self.logger.info('Request for TCP forwarding from '
+                                     '%s to %s denied by application',
+                                     (orig_host, orig_port), dest_path)
+
+                    raise ChannelOpenError(OPEN_ADMINISTRATIVELY_PROHIBITED,
+                                           'Connection forwarding denied')
 
             return (await self.create_unix_connection(session_factory,
                                                       dest_path))
@@ -5730,6 +5781,10 @@ class SSHServerConnection(SSHConnection):
             if listener is True:
                 listener = await self.forward_local_port(
                     listen_host, listen_port, listen_host, listen_port)
+            elif callable(listener):
+                listener = await self.forward_local_port(
+                    listen_host, listen_port,
+                    listen_host, listen_port, listener)
         except OSError:
             self.logger.debug1('Failed to create TCP listener')
             self._report_global_response(False)
@@ -6548,7 +6603,8 @@ class SSHConnectionOptions(Options):
         if x509_trusted_cert_paths:
             for path in x509_trusted_cert_paths:
                 if not Path(path).is_dir():
-                    raise ValueError('Path not a directory: ' + str(path))
+                    raise ValueError('X.509 trusted certificate path not '
+                                     f'a directory: {path}')
 
         self.x509_trusted_certs = x509_trusted_certs
         self.x509_trusted_cert_paths = x509_trusted_cert_paths
@@ -6972,7 +7028,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
            build up a configuration. When an option is not explicitly
            specified, its value will be pulled from this options object
            (if present) before falling back to the default value.
-       :type client_factory: `callable` returning :class:`SSHClientConnection`
+       :type client_factory: `callable` returning :class:`SSHClient`
        :type proxy_command: `str` or `list` of `str`
        :type known_hosts: *see* :ref:`SpecifyingKnownHosts`
        :type host_key_alias: `str`
@@ -7621,7 +7677,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
            build up a configuration. When an option is not explicitly
            specified, its value will be pulled from this options object
            (if present) before falling back to the default value.
-       :type server_factory: `callable` returning :class:`SSHServerConnection`
+       :type server_factory: `callable` returning :class:`SSHServer`
        :type proxy_command: `str` or `list` of `str`
        :type family: `socket.AF_UNSPEC`, `socket.AF_INET`, or `socket.AF_INET6`
        :type server_host_keys: *see* :ref:`SpecifyingPrivateKeys`
