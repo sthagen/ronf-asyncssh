@@ -693,13 +693,61 @@ class SSHAcceptor:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._server, name)
 
+    def get_addresses(self) -> List[Tuple]:
+        """Return socket addresses being listened on
+
+           This method returns the socket addresses being listened on.
+           It returns tuples of the form returned by
+           :meth:`socket.getsockname`.  If the listener was created
+           using a hostname, the host's resolved IPs will be returned.
+           If the requested listening port was `0`, the selected
+           listening ports will be returned.
+
+           :returns: A list of socket addresses being listened on
+
+        """
+
+        if hasattr(self._server, 'get_addresses'):
+            return self._server.get_addresses()
+        else:
+            return [sock.getsockname() for sock in self.sockets]
+
+    def get_port(self) -> int:
+        """Return the port number being listened on
+
+           This method returns the port number being listened on.
+           If it is listening on multiple sockets with different port
+           numbers, this function will return `0`. In that case,
+           :meth:`get_addresses` can be used to retrieve the full
+           list of listening addresses and ports.
+
+           :returns: The port number being listened on, if there's only one
+
+        """
+
+        if hasattr(self._server, 'get_port'):
+            return self._server.get_port()
+        else:
+            ports = set(addr[1] for addr in self.get_addresses())
+            return ports.pop() if len(ports) == 1 else 0
+
     def close(self) -> None:
-        """Close this SSH listener"""
+        """Stop listening for new connections
+
+           This method can be called to stop listening for new
+           SSH connections. Existing connections will remain open.
+
+        """
 
         self._server.close()
 
     async def wait_closed(self) -> None:
-        """Wait for this SSH listener to close"""
+        """Wait for this listener to close
+
+           This method is a coroutine which waits for this
+           listener to be closed.
+
+        """
 
         await self._server.wait_closed()
 
@@ -851,6 +899,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._can_send_ext_info = False
         self._extensions_to_send: 'OrderedDict[bytes, bytes]' = OrderedDict()
 
+        self._can_recv_ext_info = False
+
         self._server_sig_algs: Set[bytes] = set()
 
         self._next_service: Optional[bytes] = None
@@ -860,6 +910,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._auth: Optional[Auth] = None
         self._auth_in_progress = False
         self._auth_complete = False
+        self._auth_final = False
         self._auth_methods = [b'none']
         self._auth_was_trivial = True
         self._username = ''
@@ -1490,15 +1541,25 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         skip_reason = ''
         exc_reason = ''
 
-        if self._kex and MSG_KEX_FIRST <= pkttype <= MSG_KEX_LAST:
-            if self._ignore_first_kex: # pragma: no cover
-                skip_reason = 'ignored first kex'
-                self._ignore_first_kex = False
+        if MSG_KEX_FIRST <= pkttype <= MSG_KEX_LAST:
+            if self._kex:
+                if self._ignore_first_kex: # pragma: no cover
+                    skip_reason = 'ignored first kex'
+                    self._ignore_first_kex = False
+                else:
+                    handler = self._kex
             else:
-                handler = self._kex
-        elif (self._auth and
-              MSG_USERAUTH_FIRST <= pkttype <= MSG_USERAUTH_LAST):
-            handler = self._auth
+                skip_reason = 'kex not in progress'
+                exc_reason = 'Key exchange not in progress'
+        elif MSG_USERAUTH_FIRST <= pkttype <= MSG_USERAUTH_LAST:
+            if self._auth:
+                handler = self._auth
+            else:
+                skip_reason = 'auth not in progress'
+                exc_reason = 'Authentication not in progress'
+        elif pkttype > MSG_KEX_LAST and not self._recv_encryption:
+            skip_reason = 'invalid request before kex complete'
+            exc_reason = 'Invalid request before key exchange was complete'
         elif pkttype > MSG_USERAUTH_LAST and not self._auth_complete:
             skip_reason = 'invalid request before auth complete'
             exc_reason = 'Invalid request before authentication was complete'
@@ -1531,6 +1592,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if exc_reason:
             raise ProtocolError(exc_reason)
 
+        if pkttype > MSG_USERAUTH_LAST:
+            self._auth_final = True
+
         if self._transport:
             self._recv_seq = (seq + 1) & 0xffffffff
             self._recv_handler = self._recv_pkthdr
@@ -1548,9 +1612,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._send_kexinit()
             self._kexinit_sent = True
 
-        if (((pkttype in {MSG_SERVICE_REQUEST, MSG_SERVICE_ACCEPT} or
-              pkttype > MSG_KEX_LAST) and not self._kex_complete) or
-                (pkttype == MSG_USERAUTH_BANNER and
+        if ((pkttype == MSG_USERAUTH_BANNER and
                  not (self._auth_in_progress or self._auth_complete)) or
                 (pkttype > MSG_USERAUTH_LAST and not self._auth_complete)):
             self._deferred_packets.append((pkttype, args))
@@ -1762,9 +1824,11 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                         not self._waiter.cancelled():
                     self._waiter.set_result(None)
                     self._wait = None
-                else:
-                    self.send_service_request(_USERAUTH_SERVICE)
+                    return
         else:
+            self._extensions_to_send[b'server-sig-algs'] = \
+                b','.join(self._sig_algs)
+
             self._send_encryption = next_enc_sc
             self._send_enchdrlen = 1 if etm_sc else 5
             self._send_blocksize = max(8, enc_blocksize_sc)
@@ -1785,17 +1849,18 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 recv_mac=self._mac_alg_cs.decode('ascii'),
                 recv_compression=self._cmp_alg_cs.decode('ascii'))
 
-            if first_kex:
-                self._next_service = _USERAUTH_SERVICE
-
-                self._extensions_to_send[b'server-sig-algs'] = \
-                    b','.join(self._sig_algs)
-
         if self._can_send_ext_info:
             self._send_ext_info()
             self._can_send_ext_info = False
 
         self._kex_complete = True
+
+        if first_kex:
+            if self.is_client():
+                self.send_service_request(_USERAUTH_SERVICE)
+            else:
+                self._next_service = _USERAUTH_SERVICE
+
         self._send_deferred_packets()
 
     def send_service_request(self, service: bytes) -> None:
@@ -2032,18 +2097,25 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         service = packet.get_string()
         packet.check_end()
 
-        if service == self._next_service:
-            self.logger.debug2('Accepting request for service %s', service)
+        if self.is_client():
+            raise ProtocolError('Unexpected service request received')
 
-            self.send_packet(MSG_SERVICE_ACCEPT, String(service))
+        if not self._recv_encryption:
+            raise ProtocolError('Service request received before kex complete')
 
-            if (self.is_server() and               # pragma: no branch
-                    not self._auth_in_progress and
-                    service == _USERAUTH_SERVICE):
-                self._auth_in_progress = True
-                self._send_deferred_packets()
-        else:
-            raise ServiceNotAvailable('Unexpected service request received')
+        if service != self._next_service:
+            raise ServiceNotAvailable('Unexpected service in service request')
+
+        self.logger.debug2('Accepting request for service %s', service)
+
+        self.send_packet(MSG_SERVICE_ACCEPT, String(service))
+
+        self._next_service = None
+
+        if service == _USERAUTH_SERVICE: # pragma: no branch
+            self._auth_in_progress = True
+            self._can_recv_ext_info = False
+            self._send_deferred_packets()
 
     def _process_service_accept(self, _pkttype: int, _pktid: int,
                                 packet: SSHPacket) -> None:
@@ -2052,26 +2124,34 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         service = packet.get_string()
         packet.check_end()
 
-        if service == self._next_service:
-            self.logger.debug2('Request for service %s accepted', service)
+        if self.is_server():
+            raise ProtocolError('Unexpected service accept received')
 
-            self._next_service = None
+        if not self._recv_encryption:
+            raise ProtocolError('Service accept received before kex complete')
 
-            if (self.is_client() and               # pragma: no branch
-                    service == _USERAUTH_SERVICE):
-                self.logger.info('Beginning auth for user %s', self._username)
+        if service != self._next_service:
+            raise ServiceNotAvailable('Unexpected service in service accept')
 
-                self._auth_in_progress = True
+        self.logger.debug2('Request for service %s accepted', service)
 
-                # This method is only in SSHClientConnection
-                # pylint: disable=no-member
-                cast('SSHClientConnection', self).try_next_auth()
-        else:
-            raise ServiceNotAvailable('Unexpected service accept received')
+        self._next_service = None
+
+        if service == _USERAUTH_SERVICE: # pragma: no branch
+            self.logger.info('Beginning auth for user %s', self._username)
+
+            self._auth_in_progress = True
+
+            # This method is only in SSHClientConnection
+            # pylint: disable=no-member
+            cast('SSHClientConnection', self).try_next_auth()
 
     def _process_ext_info(self, _pkttype: int, _pktid: int,
                           packet: SSHPacket) -> None:
         """Process extension information"""
+
+        if not self._can_recv_ext_info:
+            raise ProtocolError('Unexpected ext_info received')
 
         extensions: Dict[bytes, bytes] = {}
 
@@ -2198,6 +2278,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._decompress_after_auth = self._next_decompress_after_auth
 
             self._next_recv_encryption = None
+            self._can_recv_ext_info = True
         else:
             raise ProtocolError('New keys not negotiated')
 
@@ -2225,8 +2306,10 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if self.is_client():
             raise ProtocolError('Unexpected userauth request')
         elif self._auth_complete:
-            # Silently ignore requests if we're already authenticated
-            pass
+            # Silently ignore additional auth requests after auth succeeds,
+            # until the client sends a non-auth message
+            if self._auth_final:
+                raise ProtocolError('Unexpected userauth request')
         else:
             if username != self._username:
                 self.logger.info('Beginning auth for user %s', username)
@@ -2268,7 +2351,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._auth = lookup_server_auth(cast(SSHServerConnection, self),
                                              self._username, method, packet)
 
-    def _process_userauth_failure(self, _pkttype: int, pktid: int,
+    def _process_userauth_failure(self, _pkttype: int, _pktid: int,
                                   packet: SSHPacket) -> None:
         """Process a user authentication failure response"""
 
@@ -2308,10 +2391,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             # pylint: disable=no-member
             cast(SSHClientConnection, self).try_next_auth()
         else:
-            self.logger.debug2('Unexpected userauth failure response')
-            self.send_packet(MSG_UNIMPLEMENTED, UInt32(pktid))
+            raise ProtocolError('Unexpected userauth failure response')
 
-    def _process_userauth_success(self, _pkttype: int, pktid: int,
+    def _process_userauth_success(self, _pkttype: int, _pktid: int,
                                   packet: SSHPacket) -> None:
         """Process a user authentication success response"""
 
@@ -2337,6 +2419,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._auth = None
             self._auth_in_progress = False
             self._auth_complete = True
+            self._can_recv_ext_info = False
 
             if self._agent:
                 self._agent.close()
@@ -2364,8 +2447,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 self._waiter.set_result(None)
                 self._wait = None
         else:
-            self.logger.debug2('Unexpected userauth success response')
-            self.send_packet(MSG_UNIMPLEMENTED, UInt32(pktid))
+            raise ProtocolError('Unexpected userauth success response')
 
     def _process_userauth_banner(self, _pkttype: int, _pktid: int,
                                  packet: SSHPacket) -> None:
@@ -4013,7 +4095,7 @@ class SSHClientConnection(SSHConnection):
                              stderr: ProcessTarget = PIPE,
                              bufsize: int = io.DEFAULT_BUFFER_SIZE,
                              send_eof: bool = True, recv_eof: bool = True,
-                             **kwargs: object) -> SSHClientProcess:
+                             **kwargs: object) -> SSHClientProcess[AnyStr]:
         """Create a process on the remote system
 
            This method is a coroutine wrapper around :meth:`create_session`
