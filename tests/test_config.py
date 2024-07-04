@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2022 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2020-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -347,6 +347,17 @@ class _TestClientConfig(_TestConfig):
 
         self.assertEqual(config.get('User'), 'newuser')
         self.assertEqual(config.get('BindAddress'), 'addr')
+        self.assertEqual(config.get('Port'), 2222)
+
+    def test_tag(self):
+        """Test setting and matching a tag"""
+
+        config = self._parse_config('Tag tag2\n'
+                                    'Match tagged tag1\n'
+                                    '  Port 1111\n'
+                                    'Match tagged tag*\n'
+                                    '  Port 2222')
+
         self.assertEqual(config.get('Port'), 2222)
 
     def test_port_already_set(self):

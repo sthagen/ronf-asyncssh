@@ -37,20 +37,23 @@ Once an SSH client connection is established and authentication is successful,
 multiple simultaneous channels can be opened on it.  This is accomplished
 calling methods such as :meth:`create_session()
 <SSHClientConnection.create_session>`, :meth:`create_connection()
-<SSHClientConnection.create_connection>`, and :meth:`create_unix_connection()
-<SSHClientConnection.create_unix_connection>` on the
-:class:`SSHClientConnection` object. The client can also set up listeners on
-remote TCP ports and UNIX domain sockets by calling :meth:`create_server()
-<SSHClientConnection.create_server>` and :meth:`create_unix_server()
-<SSHClientConnection.create_unix_server>`. All of these methods take
-``session_factory`` arguments that return :class:`SSHClientSession`,
-:class:`SSHTCPSession`, or :class:`SSHUNIXSession` objects used to manage
-the channels once they are open. Alternately, channels can be opened using
-:meth:`open_session() <SSHClientConnection.open_session>`,
-:meth:`open_connection() <SSHClientConnection.open_connection>`, or
+<SSHClientConnection.create_connection>`, :meth:`create_unix_connection()
+<SSHClientConnection.create_unix_connection>`, :meth:`create_tun()
+<SSHClientConnection.create_tun>`, and :meth:`create_tap()
+<SSHClientConnection.create_tap>` on the :class:`SSHClientConnection` object.
+The client can also set up listeners on remote TCP ports and UNIX domain
+sockets by calling :meth:`create_server() <SSHClientConnection.create_server>`
+and :meth:`create_unix_server() <SSHClientConnection.create_unix_server>`.
+All of these methods take ``session_factory`` arguments that return
+:class:`SSHClientSession`, :class:`SSHTCPSession`, or :class:`SSHUNIXSession`
+objects used to manage the channels once they are open. Alternately, channels
+can be opened using :meth:`open_session() <SSHClientConnection.open_session>`,
+:meth:`open_connection() <SSHClientConnection.open_connection>`,
 :meth:`open_unix_connection() <SSHClientConnection.open_unix_connection>`,
-which return :class:`SSHReader` and :class:`SSHWriter` objects that can be
-used to perform I/O on the channel. The methods :meth:`start_server()
+:meth:`open_tun() <SSHClientConnection.open_tun>`, or
+:meth:`open_tap() <SSHClientConnection.open_tap>`, which return
+:class:`SSHReader` and :class:`SSHWriter` objects that can be used to
+perform I/O on the channel. The methods :meth:`start_server()
 <SSHClientConnection.start_server>` and :meth:`start_unix_server()
 <SSHClientConnection.start_unix_server>` can be used to set up listeners on
 remote TCP ports or UNIX domain sockets and get back these :class:`SSHReader`
@@ -84,16 +87,21 @@ to a UNIX domain socket or vice-versa can be set up using the functions
 :meth:`forward_remote_port_to_path()
 <SSHClientConnection.forward_remote_port_to_path>`, and
 :meth:`forward_remote_path_to_port()
-<SSHClientConnection.forward_remote_path_to_port>`.
-
-In these cases, data transfer on
-the channels is managed automatically by AsyncSSH whenever new connections
-are opened, so custom session objects are not required.
+<SSHClientConnection.forward_remote_path_to_port>`. In these cases, data
+transfer on the channels is managed automatically by AsyncSSH whenever new
+connections are opened, so custom session objects are not required.
 
 Dynamic TCP port forwarding can be set up by calling :meth:`forward_socks()
 <SSHClientConnection.forward_socks>`. The SOCKS listener set up by
 AsyncSSH on the requested port accepts SOCKS connect requests and is
 compatible with SOCKS versions 4, 4a, and 5.
+
+Bidirectional packet forwarding at layer 2 or 3 is also supported using
+the functions :meth:`forward_tun() <SSHClientConnection.forward_tun>` and
+:meth:`forward_tap() <SSHClientConnection.forward_tap>` to set up tunnels
+between local and remote TUN or TAP interfaces. Once a tunnel is established,
+packets arriving on TUN/TAP interfaces on either side are sent over the
+tunnel and automatically sent out the TUN/TAP interface on the other side.
 
 When an SSH server receives a new connection and authentication is successful,
 handlers such as :meth:`session_requested() <SSHServer.session_requested>`,
@@ -136,66 +144,20 @@ found under :ref:`Constants`.
 Main Functions
 ==============
 
-connect
--------
-
 .. autofunction:: connect
-
-connect_reverse
----------------
-
 .. autofunction:: connect_reverse
-
-listen
-------
-
 .. autofunction:: listen
-
-listen_reverse
---------------
-
 .. autofunction:: listen_reverse
-
-run_client
-----------
-
 .. autofunction:: run_client
-
-run_server
-----------
-
 .. autofunction:: run_server
-
-create_connection
------------------
-
 .. autofunction:: create_connection
-
-create_server
--------------
-
 .. autofunction:: create_server
-
-get_server_host_key
--------------------
-
 .. autofunction:: get_server_host_key
-
-get_server_auth_methods
------------------------
-
 .. autofunction:: get_server_auth_methods
-
-scp
----
-
 .. autofunction:: scp
 
 Main Classes
 ============
-
-SSHClient
----------
 
 .. autoclass:: SSHClient
 
@@ -242,9 +204,6 @@ SSHClient
    .. automethod:: kbdint_auth_requested
    .. automethod:: kbdint_challenge_received
    ============================================ =
-
-SSHServer
----------
 
 .. autoclass:: SSHServer
 
@@ -310,13 +269,12 @@ SSHServer
    .. automethod:: unix_connection_requested
    .. automethod:: server_requested
    .. automethod:: unix_server_requested
+   .. automethod:: tun_requested
+   .. automethod:: tap_requested
    ========================================= =
 
 Connection Classes
 ==================
-
-SSHClientConnection
--------------------
 
 .. autoclass:: SSHClientConnection()
 
@@ -334,6 +292,7 @@ SSHClientConnection
    .. automethod:: set_keepalive
    .. automethod:: get_server_host_key
    .. automethod:: send_debug
+   .. automethod:: is_closed
    =================================== =
 
    ====================================================================================================================================================== =
@@ -363,12 +322,15 @@ SSHClientConnection
    .. automethod:: open_unix_connection
    .. automethod:: create_unix_server
    .. automethod:: start_unix_server
+   .. automethod:: create_tun
+   .. automethod:: create_tap
+   .. automethod:: open_tun
+   .. automethod:: open_tap
    ====================================== =
 
    =========================================== =
    Client forwarding methods
    =========================================== =
-   .. automethod:: forward_connection
    .. automethod:: forward_local_port
    .. automethod:: forward_local_path
    .. automethod:: forward_local_port_to_path
@@ -378,6 +340,8 @@ SSHClientConnection
    .. automethod:: forward_remote_port_to_path
    .. automethod:: forward_remote_path_to_port
    .. automethod:: forward_socks
+   .. automethod:: forward_tun
+   .. automethod:: forward_tap
    =========================================== =
 
    =========================== =
@@ -388,9 +352,6 @@ SSHClientConnection
    .. automethod:: disconnect
    .. automethod:: wait_closed
    =========================== =
-
-SSHServerConnection
--------------------
 
 .. autoclass:: SSHServerConnection()
 
@@ -407,6 +368,7 @@ SSHServerConnection
    .. automethod:: set_extra_info
    .. automethod:: set_keepalive
    .. automethod:: send_debug
+   .. automethod:: is_closed
    ============================== =
 
    ============================================ =
@@ -429,19 +391,13 @@ SSHServerConnection
    .. automethod:: open_unix_connection
    ====================================== =
 
-   ======================================= =
-   Server forwarding methods
-   ======================================= =
-   .. automethod:: forward_connection
-   .. automethod:: forward_unix_connection
-   ======================================= =
-
    ===================================== =
    Server channel creation methods
    ===================================== =
    .. automethod:: create_server_channel
    .. automethod:: create_tcp_channel
    .. automethod:: create_unix_channel
+   .. automethod:: create_tuntap_channel
    ===================================== =
 
    =========================== =
@@ -453,21 +409,12 @@ SSHServerConnection
    .. automethod:: wait_closed
    =========================== =
 
-SSHClientConnectionOptions
---------------------------
-
 .. autoclass:: SSHClientConnectionOptions()
-
-SSHServerConnectionOptions
---------------------------
 
 .. autoclass:: SSHServerConnectionOptions()
 
 Process Classes
 ===============
-
-SSHClientProcess
-----------------
 
 .. autoclass:: SSHClientProcess
 
@@ -510,9 +457,6 @@ SSHClientProcess
    .. automethod:: wait_closed
    ======================================================================= =
 
-SSHServerProcess
-----------------
-
 .. autoclass:: SSHServerProcess
 
    ============================== =
@@ -548,13 +492,7 @@ SSHServerProcess
    .. automethod:: wait_closed
    ================================ =
 
-SSHCompletedProcess
--------------------
-
 .. autoclass:: SSHCompletedProcess()
-
-SSHSubprocessReadPipe
----------------------
 
 .. autoclass:: SSHSubprocessReadPipe()
 
@@ -576,9 +514,6 @@ SSHSubprocessReadPipe
    ======================================================================= =
    .. automethod:: close
    ======================================================================= =
-
-SSHSubprocessWritePipe
-----------------------
 
 .. autoclass:: SSHSubprocessWritePipe()
 
@@ -606,9 +541,6 @@ SSHSubprocessWritePipe
    .. automethod:: close
    ======================================================================= =
 
-SSHSubprocessProtocol
----------------------
-
 .. autoclass:: SSHSubprocessProtocol
 
    ==================================== =
@@ -629,9 +561,6 @@ SSHSubprocessProtocol
    ================================== =
    .. automethod:: process_exited
    ================================== =
-
-SSHSubprocessTransport
-----------------------
 
 .. autoclass:: SSHSubprocessTransport
 
@@ -659,9 +588,6 @@ SSHSubprocessTransport
 
 Session Classes
 ===============
-
-SSHClientSession
-----------------
 
 .. autoclass:: SSHClientSession
 
@@ -694,9 +620,6 @@ SSHClientSession
    .. automethod:: exit_status_received
    .. automethod:: exit_signal_received
    ==================================== =
-
-SSHServerSession
-----------------
 
 .. autoclass:: SSHServerSession
 
@@ -739,9 +662,6 @@ SSHServerSession
    .. automethod:: terminal_size_changed
    ===================================== =
 
-SSHTCPSession
--------------
-
 .. autoclass:: SSHTCPSession
 
    =============================== =
@@ -765,9 +685,6 @@ SSHTCPSession
    .. automethod:: pause_writing
    .. automethod:: resume_writing
    ============================== =
-
-SSHUNIXSession
---------------
 
 .. autoclass:: SSHUNIXSession
 
@@ -793,11 +710,32 @@ SSHUNIXSession
    .. automethod:: resume_writing
    ============================== =
 
+.. autoclass:: SSHTunTapSession
+
+   =============================== =
+   General session handlers
+   =============================== =
+   .. automethod:: connection_made
+   .. automethod:: connection_lost
+   .. automethod:: session_started
+   =============================== =
+
+   ============================= =
+   General session read handlers
+   ============================= =
+   .. automethod:: data_received
+   .. automethod:: eof_received
+   ============================= =
+
+   ============================== =
+   General session write handlers
+   ============================== =
+   .. automethod:: pause_writing
+   .. automethod:: resume_writing
+   ============================== =
+
 Channel Classes
 ===============
-
-SSHClientChannel
-----------------
 
 .. autoclass:: SSHClientChannel()
 
@@ -856,9 +794,6 @@ SSHClientChannel
    .. automethod:: is_closing
    .. automethod:: wait_closed
    ============================= =
-
-SSHServerChannel
-----------------
 
 .. autoclass:: SSHServerChannel()
 
@@ -926,9 +861,6 @@ SSHServerChannel
    .. automethod:: wait_closed
    ============================= =
 
-SSHLineEditorChannel
---------------------
-
 .. autoclass:: SSHLineEditorChannel()
 
    ============================== =
@@ -939,9 +871,6 @@ SSHLineEditorChannel
    .. automethod:: set_line_mode
    .. automethod:: set_echo
    ============================== =
-
-SSHTCPChannel
--------------
 
 .. autoclass:: SSHTCPChannel()
 
@@ -985,9 +914,6 @@ SSHTCPChannel
    .. automethod:: wait_closed
    ============================= =
 
-SSHUNIXChannel
---------------
-
 .. autoclass:: SSHUNIXChannel()
 
    ======================================================================= =
@@ -1030,11 +956,61 @@ SSHUNIXChannel
    .. automethod:: wait_closed
    ============================= =
 
+.. autoclass:: SSHTunTapChannel()
+
+   ======================================================================= =
+   Channel attributes
+   ======================================================================= =
+   .. autoattribute:: logger
+   ======================================================================= =
+
+   ============================== =
+   General channel info methods
+   ============================== =
+   .. automethod:: get_extra_info
+   .. automethod:: set_extra_info
+   ============================== =
+
+   ============================== =
+   General channel read methods
+   ============================== =
+   .. automethod:: pause_reading
+   .. automethod:: resume_reading
+   ============================== =
+
+   ======================================= =
+   General channel write methods
+   ======================================= =
+   .. automethod:: can_write_eof
+   .. automethod:: get_write_buffer_size
+   .. automethod:: set_write_buffer_limits
+   .. automethod:: write
+   .. automethod:: writelines
+   .. automethod:: write_eof
+   ======================================= =
+
+   ============================= =
+   General channel close methods
+   ============================= =
+   .. automethod:: abort
+   .. automethod:: close
+   .. automethod:: is_closing
+   .. automethod:: wait_closed
+   ============================= =
+
+Forwarder Classes
+=================
+
+.. autoclass:: SSHForwarder()
+
+   ============================== =
+   .. automethod:: get_extra_info
+   .. automethod:: close
+   ============================== =
+
+
 Listener Classes
 ================
-
-SSHAcceptor
------------
 
 .. autoclass:: SSHAcceptor()
 
@@ -1046,9 +1022,6 @@ SSHAcceptor
    .. automethod:: update
    ============================= =
 
-
-SSHListener
------------
 .. autoclass:: SSHListener()
 
    =========================== =
@@ -1059,9 +1032,6 @@ SSHListener
 
 Stream Classes
 ==============
-
-SSHReader
----------
 
 .. autoclass:: SSHReader()
 
@@ -1077,9 +1047,6 @@ SSHReader
    .. automethod:: readuntil
    .. automethod:: readexactly
    ============================== =
-
-SSHWriter
----------
 
 .. autoclass:: SSHWriter()
 
@@ -1099,9 +1066,6 @@ SSHWriter
 
 SFTP Support
 ============
-
-SFTPClient
-----------
 
 .. autoclass:: SFTPClient()
 
@@ -1186,9 +1150,6 @@ SFTPClient
    .. automethod:: wait_closed
    =========================== =
 
-SFTPClientFile
---------------
-
 .. autoclass:: SFTPClientFile()
 
    ================================================= =
@@ -1209,9 +1170,6 @@ SFTPClientFile
    .. automethod:: fsync
    .. automethod:: close
    ================================================= =
-
-SFTPServer
-----------
 
 .. autoclass:: SFTPServer
 
@@ -1279,18 +1237,9 @@ SFTPServer
    .. automethod:: exit
    ===================== =
 
-SFTPAttrs
----------
-
 .. autoclass:: SFTPAttrs()
 
-SFTPVFSAttrs
-------------
-
 .. autoclass:: SFTPVFSAttrs()
-
-SFTPName
---------
 
 .. autoclass:: SFTPName()
 
@@ -1490,8 +1439,8 @@ methods. These values can be specified in any of the following ways:
       to refer to times in the past or positive to refer to times in the
       future.
 
-SSHKey
-------
+Key and certificate classes/functions
+-------------------------------------
 
 .. autoclass:: SSHKey()
 
@@ -1515,9 +1464,6 @@ SSHKey
    .. automethod:: append_public_key
    ============================================== =
 
-SSHKeyPair
-----------
-
 .. autoclass:: SSHKeyPair()
 
    ================================= =
@@ -1528,9 +1474,6 @@ SSHKeyPair
    .. automethod:: get_comment
    .. automethod:: set_comment
    ================================= =
-
-SSHCertificate
---------------
 
 .. autoclass:: SSHCertificate()
 
@@ -1544,87 +1487,25 @@ SSHCertificate
    .. automethod:: append_certificate
    ================================== =
 
-generate_private_key
---------------------
-
 .. autofunction:: generate_private_key
-
-import_private_key
-------------------
-
 .. autofunction:: import_private_key
-
-import_public_key
------------------
-
 .. autofunction:: import_public_key
-
-import_certificate
-------------------
-
 .. autofunction:: import_certificate
-
-read_private_key
-----------------
-
 .. autofunction:: read_private_key
-
-read_public_key
----------------
-
 .. autofunction:: read_public_key
-
-read_certificate
-----------------
-
 .. autofunction:: read_certificate
-
-read_private_key_list
----------------------
-
 .. autofunction:: read_private_key_list
-
-read_public_key_list
---------------------
-
 .. autofunction:: read_public_key_list
-
-read_certificate_list
----------------------
-
 .. autofunction:: read_certificate_list
-
-load_keypairs
--------------
-
 .. autofunction:: load_keypairs
-
-load_public_keys
-----------------
-
 .. autofunction:: load_public_keys
-
-load_certificates
------------------
-
 .. autofunction:: load_certificates
-
-load_pkcs11_keys
-----------------
-
 .. autofunction:: load_pkcs11_keys
-
-load_resident_keys
-------------------
-
 .. autofunction:: load_resident_keys
+.. autofunction:: set_default_skip_rsa_key_validation
 
 .. index:: SSH agent support
-
-set_default_skip_rsa_key_validation
------------------------------------
-
-.. autofunction:: set_default_skip_rsa_key_validation
+.. _SSHAgentSupport:
 
 SSH Agent Support
 =================
@@ -1658,9 +1539,6 @@ path to a UNIX domain socket which can be passed as the ``SSH_AUTH_SOCK``
 to local applications which need this access. Any requests sent to this
 socket are forwarded over the SSH connection to the client's ssh-agent.
 
-SSHAgentClient
---------------
-
 .. autoclass:: SSHAgentClient()
 
    ===================================== =
@@ -1677,9 +1555,6 @@ SSHAgentClient
    .. automethod:: wait_closed
    ===================================== =
 
-SSHAgentKeyPair
----------------
-
 .. autoclass:: SSHAgentKeyPair()
 
    ================================= =
@@ -1690,9 +1565,6 @@ SSHAgentKeyPair
    .. automethod:: set_comment
    .. automethod:: remove
    ================================= =
-
-connect_agent
--------------
 
 .. autofunction:: connect_agent
 
@@ -1951,8 +1823,8 @@ which can be provided, :ref:`SpecifyingCertificates` for the allowed form
 of certificates, and :ref:`SpecifyingX509Subjects` for the allowed form
 of X.509 subject names.
 
-SSHKnownHosts
--------------
+Known hosts classes/functions
+-----------------------------
 
 .. autoclass:: SSHKnownHosts()
 
@@ -1960,20 +1832,8 @@ SSHKnownHosts
    .. automethod:: match
    ===================== =
 
-import_known_hosts
-------------------
-
 .. autofunction:: import_known_hosts
-
-read_known_hosts
-----------------
-
 .. autofunction:: read_known_hosts
-
-
-match_known_hosts
------------------
-
 .. autofunction:: match_known_hosts
 
 .. index:: Authorized keys
@@ -2011,19 +1871,12 @@ in OpenSSH format or X.509 certificate subject names. See
 :ref:`SpecifyingX509Subjects` for more information on using subject names
 in place of specific X.509 certificates.
 
-SSHAuthorizedKeys
------------------
+Authorized keys classes/functions
+---------------------------------
 
 .. autoclass:: SSHAuthorizedKeys()
 
-import_authorized_keys
-----------------------
-
 .. autofunction:: import_authorized_keys
-
-read_authorized_keys
---------------------
-
 .. autofunction:: read_authorized_keys
 
 .. index:: Logging
@@ -2050,19 +1903,8 @@ be used by application code to output custom log information associated
 with a particular connection or channel. Logger objects are also provided
 as members of SFTP client and server objects.
 
-set_log_level
--------------
-
 .. autofunction:: set_log_level
-
-set_sftp_log_level
-------------------
-
 .. autofunction:: set_sftp_log_level
-
-set_debug_level
----------------
-
 .. autofunction:: set_debug_level
 
 .. index:: Exceptions
@@ -2071,29 +1913,10 @@ set_debug_level
 Exceptions
 ==========
 
-PasswordChangeRequired
-----------------------
-
 .. autoexception:: PasswordChangeRequired
-
-BreakReceived
--------------
-
 .. autoexception:: BreakReceived
-
-SignalReceived
---------------
-
 .. autoexception:: SignalReceived
-
-TerminalSizeChanged
--------------------
-
 .. autoexception:: TerminalSizeChanged
-
-DisconnectError
----------------
-
 .. autoexception:: DisconnectError
 .. autoexception:: CompressionError
 .. autoexception:: ConnectionLost
@@ -2105,30 +1928,10 @@ DisconnectError
 .. autoexception:: ProtocolError
 .. autoexception:: ProtocolNotSupported
 .. autoexception:: ServiceNotAvailable
-
-ChannelOpenError
-----------------
-
 .. autoexception:: ChannelOpenError
-
-ChannelListenError
-------------------
-
 .. autoexception:: ChannelListenError
-
-ProcessError
-------------
-
 .. autoexception:: ProcessError
-
-TimeoutError
-------------
-
 .. autoexception:: TimeoutError
-
-SFTPError
----------
-
 .. autoexception:: SFTPError
 .. autoexception:: SFTPEOFError
 .. autoexception:: SFTPNoSuchFile
@@ -2161,30 +1964,10 @@ SFTPError
 .. autoexception:: SFTPOwnerInvalid
 .. autoexception:: SFTPGroupInvalid
 .. autoexception:: SFTPNoMatchingByteRangeLock
-
-KeyImportError
---------------
-
 .. autoexception:: KeyImportError
-
-KeyExportError
---------------
-
 .. autoexception:: KeyExportError
-
-KeyEncryptionError
-------------------
-
 .. autoexception:: KeyEncryptionError
-
-KeyGenerationError
-------------------
-
 .. autoexception:: KeyGenerationError
-
-ConfigParseError
-----------------
-
 .. autoexception:: ConfigParseError
 
 .. index:: Supported algorithms

@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2023 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -22,7 +22,10 @@
 
 import asyncio
 import socket
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, cast
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
+from typing import Type, cast
+from typing_extensions import Self
 
 from .misc import ChannelOpenError, SockAddr
 
@@ -38,7 +41,8 @@ SSHForwarderCoro = Callable[..., Awaitable]
 class SSHForwarder(asyncio.BaseProtocol):
     """SSH port forwarding connection handler"""
 
-    def __init__(self, peer: Optional['SSHForwarder'] = None):
+    def __init__(self, peer: Optional['SSHForwarder'] = None,
+                 extra: Optional[Dict[str, Any]] = None):
         self._peer = peer
         self._transport: Optional[asyncio.Transport] = None
         self._inpbuf = b''
@@ -46,6 +50,32 @@ class SSHForwarder(asyncio.BaseProtocol):
 
         if peer:
             peer.set_peer(self)
+
+        if extra is None:
+            extra = {}
+
+        self._extra = extra
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, _exc_type: Optional[Type[BaseException]],
+                        _exc_value: Optional[BaseException],
+                        _traceback: Optional[TracebackType]) -> bool:
+        self.close()
+        return False
+
+    def get_extra_info(self, name: str, default: Any = None) -> Any:
+        """Get additional information about the forwarder
+
+           This method returns extra information about the forwarder.
+           Currently, the only information available is the value
+           ``interface`` for TUN/TAP forwarders, returning the name of the
+           local TUN/TAP network interface created for this forwarder.
+
+        """
+
+        return self._extra.get(name, default)
 
     def set_peer(self, peer: 'SSHForwarder') -> None:
         """Set the peer forwarder to exchange data with"""

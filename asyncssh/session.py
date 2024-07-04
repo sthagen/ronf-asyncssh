@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -21,20 +21,15 @@
 """SSH session handlers"""
 
 from typing import TYPE_CHECKING, Any, AnyStr, Callable, Generic
-from typing import Mapping, Optional, Tuple, Union
+from typing import Mapping, Optional, Tuple
 
 
 if TYPE_CHECKING:
     # pylint: disable=cyclic-import
     from .channel import SSHClientChannel, SSHServerChannel
-    from .channel import SSHTCPChannel, SSHUNIXChannel
+    from .channel import SSHTCPChannel, SSHUNIXChannel,  SSHTunTapChannel
 
 DataType = Optional[int]
-
-TermModes = Mapping[int, int]
-TermModesArg = Optional[TermModes]
-TermSize = Tuple[int, int, int, int]
-TermSizeArg = Union[None, Tuple[int, int], TermSize]
 
 
 class SSHSession(Generic[AnyStr]):
@@ -537,7 +532,45 @@ class SSHUNIXSession(SSHSession[AnyStr]):
         """
 
 
+class SSHTunTapSession(SSHSession[bytes]):
+    """SSH TUN/TAP session handler
+
+       Applications should subclass this when implementing a handler for
+       SSH TUN/TAP tunnels.
+
+       SSH client applications wishing to open a tunnel should call
+       :meth:`create_tun() <SSHClientConnection.create_tun>` or
+       :meth:`create_tap() <SSHClientConnection.create_tap>` on their
+       :class:`SSHClientConnection`, passing in a factory which returns
+       instances of this class.
+
+       Server applications wishing to allow tunnel connections should
+       implement the coroutine :meth:`tun_requested()
+       <SSHServer.tun_requested>` or :meth:`tap_requested()
+       <SSHServer.tap_requested>` on their :class:`SSHServer` object
+       and have it return instances of this class.
+
+       When a connection is successfully opened, :meth:`session_started`
+       will be called, after which the application can begin sending data.
+       Received data will be passed to the :meth:`data_received` method.
+
+    """
+
+    def connection_made(self, chan: 'SSHTunTapChannel') -> None:
+        """Called when a channel is opened successfully
+
+           This method is called when a channel is opened successfully. The
+           channel parameter should be stored if needed for later use.
+
+           :param chan:
+               The channel which was successfully opened.
+           :type chan: :class:`SSHTunTapChannel`
+
+        """
+
+
 SSHSessionFactory = Callable[[], SSHSession[AnyStr]]
 SSHClientSessionFactory = Callable[[], SSHClientSession[AnyStr]]
 SSHTCPSessionFactory = Callable[[], SSHTCPSession[AnyStr]]
 SSHUNIXSessionFactory = Callable[[], SSHUNIXSession[AnyStr]]
+SSHTunTapSessionFactory = Callable[[], SSHTunTapSession]

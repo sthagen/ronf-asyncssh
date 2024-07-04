@@ -34,11 +34,17 @@ import asyncssh
 from .server import ServerTestCase
 from .util import asynctest, echo
 
+if sys.platform != 'win32': # pragma: no branch
+    import fcntl
+    import struct
+    import termios
+
 try:
     import aiofiles
     _aiofiles_available = True
 except ImportError: # pragma: no cover
     _aiofiles_available = False
+
 
 async def _handle_client(process):
     """Handle a new client request"""
@@ -100,6 +106,23 @@ async def _handle_client(process):
         except asyncssh.TerminalSizeChanged as exc:
             process.exit_with_signal('ABRT', False,
                                      '%sx%s' % (exc.width, exc.height))
+    elif action == 'term_size_tty':
+        master, slave = os.openpty()
+        await process.redirect_stdin(master, recv_eof=False)
+        process.stdout.write(b'\n')
+
+        await process.stdin.readline()
+        size = fcntl.ioctl(slave, termios.TIOCGWINSZ, 8*b'\0')
+        height, width, _, _ = struct.unpack('hhhh', size)
+        process.stdout.write(('%sx%s' % (width, height)).encode())
+        os.close(slave)
+    elif action == 'term_size_nontty':
+        rpipe, wpipe = os.pipe()
+        await process.redirect_stdin(wpipe)
+        process.stdout.write(b'\n')
+
+        await process.stdin.readline()
+        os.close(rpipe)
     elif action == 'timeout':
         process.channel.set_encoding('utf-8')
         process.stdout.write('Sleeping')
@@ -648,6 +671,38 @@ class _TestProcessRedirection(_TestProcess):
 
         self.assertEqual(result.exit_signal[2], '80x24')
 
+    @unittest.skipIf(sys.platform == 'win32',
+                     'skip TTY terminal size tests on Windows')
+    @asynctest
+    async def test_forward_terminal_size_tty(self):
+        """Test forwarding a terminal size change to a remote tty"""
+
+        async with self.connect() as conn:
+            process = await conn.create_process('term_size_tty',
+                                                term_type='ansi')
+            await process.stdout.readline()
+            process.change_terminal_size(80, 24)
+            process.stdin.write_eof()
+            result = await process.wait()
+
+        self.assertEqual(result.stdout, '80x24')
+
+    @unittest.skipIf(sys.platform == 'win32',
+                     'skip TTY terminal size tests on Windows')
+    @asynctest
+    async def test_forward_terminal_size_nontty(self):
+        """Test forwarding a terminal size change to a remote non-tty"""
+
+        async with self.connect() as conn:
+            process = await conn.create_process('term_size_nontty',
+                                                term_type='ansi')
+            await process.stdout.readline()
+            process.change_terminal_size(80, 24)
+            process.stdin.write_eof()
+            result = await process.wait()
+
+        self.assertEqual(result.stdout, '')
+
     @asynctest
     async def test_forward_break(self):
         """Test forwarding a break"""
@@ -905,6 +960,28 @@ class _TestProcessRedirection(_TestProcess):
             stdout_data = await proc2.stdout.read()
 
         self.assertEqual(stdout_data, data.encode('ascii'))
+
+    @unittest.skipIf(sys.platform == 'win32',
+                     'skip asyncio.subprocess tests on Windows')
+    @asynctest
+    async def test_stdout_stream_keep_open(self):
+        """Test with stdout redirected to asyncio stream which remains open"""
+
+        data = str(id(self))
+
+        async with self.connect() as conn:
+            proc2 = await asyncio.create_subprocess_shell(
+                'cat', stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE)
+
+            await conn.run('echo', input=data, stdout=proc2.stdin,
+                           stderr=asyncssh.DEVNULL, recv_eof=False)
+            await conn.run('echo', input=data, stdout=proc2.stdin,
+                           stderr=asyncssh.DEVNULL)
+
+            stdout_data = await proc2.stdout.read()
+
+        self.assertEqual(stdout_data, 2*data.encode('ascii'))
 
     @asynctest
     async def test_change_stdout(self):
@@ -1233,6 +1310,20 @@ class _TestAsyncFileRedirection(_TestProcess):
 
         self.assertEqual(result.stdout, data)
 
+    @asynctest
+    async def test_pause_async_file_writer(self):
+        """Test pausing and resuming writing to an aiofile"""
+
+        data = 4*1024*1024*'*'
+
+        async with aiofiles.open('stdout', 'w') as file:
+            async with self.connect() as conn:
+                await conn.run('delay', input=data, stdout=file,
+                               stderr=asyncssh.DEVNULL)
+
+        with open('stdout', 'r') as file:
+            self.assertEqual(file.read(), data)
+
 
 @unittest.skipIf(sys.platform == 'win32', 'skip pipe tests on Windows')
 class _TestProcessPipes(_TestProcess):
@@ -1461,50 +1552,55 @@ class _TestProcessSocketPair(_TestProcess):
         self.assertEqual(result.stderr, data)
 
     @asynctest
-    async def test_pause_socketpair_reader(self):
-        """Test pausing and resuming reading from a socketpair"""
+    async def test_pause_socketpair_pipes(self):
+        """Test pausing and resuming reading from and writing to pipes"""
 
-        data = 4*1024*1024*'*'
+        data = 4*1024*1024*b'*'
 
         sock1, sock2 = socket.socketpair()
+        sock3, sock4 = socket.socketpair()
 
-        _, writer = await asyncio.open_unix_connection(sock=sock1)
-        writer.write(data.encode())
-        writer.close()
+        _, writer1 = await asyncio.open_unix_connection(sock=sock1)
+        writer1.write(data)
+        writer1.close()
 
-        async with self.connect() as conn:
-            result = await conn.run('delay', stdin=sock2,
-                                    stderr=asyncssh.DEVNULL)
-
-        self.assertEqual(result.stdout, data)
-
-    @asynctest
-    async def test_pause_socketpair_writer(self):
-        """Test pausing and resuming writing to a socketpair"""
-
-        data = 4*1024*1024*'*'
-
-        rsock1, wsock1 = socket.socketpair()
-        rsock2, wsock2 = socket.socketpair()
-
-        reader1, writer1 = await asyncio.open_unix_connection(sock=rsock1)
-        reader2, writer2 = await asyncio.open_unix_connection(sock=rsock2)
+        reader2, writer2 = await asyncio.open_unix_connection(sock=sock4)
 
         async with self.connect() as conn:
-            process = await conn.create_process(input=data)
+            process = await conn.create_process('delay', encoding=None,
+                                                stdin=sock2, stdout=sock3,
+                                                stderr=asyncssh.DEVNULL)
 
-            await asyncio.sleep(1)
-
-            await process.redirect_stdout(wsock1)
-            await process.redirect_stderr(wsock2)
-
-            stdout_data, stderr_data = \
-                await asyncio.gather(reader1.read(), reader2.read())
-
-            writer1.close()
-            writer2.close()
-
+            self.assertEqual((await reader2.read()), data)
             await process.wait()
 
-        self.assertEqual(stdout_data.decode(), data)
-        self.assertEqual(stderr_data.decode(), data)
+        writer2.close()
+
+    @asynctest
+    async def test_pause_socketpair_streams(self):
+        """Test pausing and resuming reading from and writing to streams"""
+
+        data = 4*1024*1024*b'*'
+
+        sock1, sock2 = socket.socketpair()
+        sock3, sock4 = socket.socketpair()
+
+        _, writer1 = await asyncio.open_unix_connection(sock=sock1)
+        writer1.write(data)
+        writer1.close()
+
+        reader2, writer2 = await asyncio.open_unix_connection(sock=sock2)
+        _, writer3 = await asyncio.open_unix_connection(sock=sock3)
+        reader4, writer4 = await asyncio.open_unix_connection(sock=sock4)
+
+        async with self.connect() as conn:
+            process = await conn.create_process('delay', encoding=None,
+                                                stdin=reader2, stdout=writer3,
+                                                stderr=asyncssh.DEVNULL)
+
+            self.assertEqual((await reader4.read()), data)
+            await process.wait()
+
+        writer2.close()
+        writer3.close()
+        writer4.close()

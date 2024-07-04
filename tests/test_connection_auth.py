@@ -1091,6 +1091,56 @@ class _TestPublicKeyAuth(ServerTestCase):
             pass
 
     @asynctest
+    async def test_encrypted_client_key_callable(self):
+        """Test public key auth with callable passphrase"""
+
+        def _passphrase(filename):
+            self.assertEqual(filename, 'ckey_encrypted')
+            return 'passphrase'
+
+        async with self.connect(username='ckey', client_keys='ckey_encrypted',
+                                passphrase=_passphrase):
+            pass
+
+    @asynctest
+    async def test_encrypted_client_key_awaitable(self):
+        """Test public key auth with awaitable passphrase"""
+
+        async def _passphrase(filename):
+            self.assertEqual(filename, 'ckey_encrypted')
+            return 'passphrase'
+
+        async with self.connect(username='ckey', client_keys='ckey_encrypted',
+                                passphrase=_passphrase):
+            pass
+
+    @asynctest
+    async def test_encrypted_client_key_list_callable(self):
+        """Test public key auth with callable passphrase"""
+
+        def _passphrase(filename):
+            self.assertEqual(filename, 'ckey_encrypted')
+            return 'passphrase'
+
+        async with self.connect(username='ckey',
+                                client_keys=['ckey_encrypted'],
+                                passphrase=_passphrase):
+            pass
+
+    @asynctest
+    async def test_encrypted_client_key_list_awaitable(self):
+        """Test public key auth with awaitable passphrase"""
+
+        async def _passphrase(filename):
+            self.assertEqual(filename, 'ckey_encrypted')
+            return 'passphrase'
+
+        async with self.connect(username='ckey',
+                                client_keys=['ckey_encrypted'],
+                                passphrase=_passphrase):
+            pass
+
+    @asynctest
     async def test_encrypted_client_key_bad_passphrase(self):
         """Test wrong passphrase for encrypted client key"""
 
@@ -1793,6 +1843,36 @@ class _TestPasswordAuth(ServerTestCase):
         """Test connecting with password authentication"""
 
         async with self.connect(username='pw', password='pw', client_keys=None):
+            pass
+
+    @asynctest
+    async def test_password_auth_callable(self):
+        """Test connecting with a callable for password authentication"""
+
+        async with self.connect(username='pw', password=lambda: 'pw',
+                                client_keys=None):
+            pass
+
+    @asynctest
+    async def test_password_auth_async_callable(self):
+        """Test connecting with an async callable for password authentication"""
+
+        async def get_password():
+            return 'pw'
+
+        async with self.connect(username='pw', password=get_password,
+                                client_keys=None):
+            pass
+
+    @asynctest
+    async def test_password_auth_awaitable(self):
+        """Test connecting with an awaitable for password authentication"""
+
+        async def get_password():
+            return 'pw'
+
+        async with self.connect(username='pw', password=get_password(),
+                                client_keys=None):
             pass
 
     @asynctest

@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2022 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2020-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -320,8 +320,9 @@ class SSHConfig:
                     self._error(str(exc))
 
                 args = []
+                loption = ''
 
-                for arg in split_args:
+                for i, arg in enumerate(split_args, 1):
                     if arg.startswith('='):
                         if len(arg) > 1:
                             args.append(arg[1:])
@@ -334,8 +335,11 @@ class SSHConfig:
                     else:
                         args.append(arg)
 
-                option = args.pop(0)
-                loption = option.lower()
+                    if i == 1:
+                        loption = args.pop(0).lower()
+                    elif i > 1 and loption not in self._conditionals:
+                        args.extend(split_args[i:])
+                        break
 
                 if loption in self._no_split:
                     args = [line.lstrip()[len(loption):].strip()]
@@ -447,6 +451,8 @@ class SSHClientConfig(SSHConfig):
             return self._local_user
         elif match == 'user':
             return self._options.get('User', self._local_user)
+        elif match == 'tagged':
+            return self._options.get('Tag', '')
         else:
             return None
 
@@ -560,7 +566,8 @@ class SSHClientConfig(SSHConfig):
         ('SendEnv',                         SSHConfig._append_string_list),
         ('ServerAliveCountMax',             SSHConfig._set_int),
         ('ServerAliveInterval',             SSHConfig._set_int),
-        ('SetEnv',                          SSHConfig._append_string_list),
+        ('SetEnv',                          SSHConfig._set_string_list),
+        ('Tag',                             SSHConfig._set_string),
         ('TCPKeepAlive',                    SSHConfig._set_bool),
         ('User',                            SSHConfig._set_string),
         ('UserKnownHostsFile',              SSHConfig._set_string_list)

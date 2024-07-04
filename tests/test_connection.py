@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2022 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2016-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -381,8 +381,10 @@ class _TestConnection(ServerTestCase):
     async def test_connect(self):
         """Test connecting with async context manager"""
 
-        async with self.connect():
+        async with self.connect() as conn:
             pass
+
+        self.assertTrue(conn.is_closed())
 
     @asynctest
     async def test_connect_sock(self):
@@ -1134,6 +1136,8 @@ class _TestConnection(ServerTestCase):
         def send_newkeys(self, k, h):
             """Finish a key exchange and send a new keys message"""
 
+            self._kex_complete = True
+
             self.send_packet(MSG_SERVICE_REQUEST, String('ssh-userauth'))
 
             asyncssh.connection.SSHConnection.send_newkeys(self, k, h)
@@ -1149,6 +1153,8 @@ class _TestConnection(ServerTestCase):
 
         def send_newkeys(self, k, h):
             """Finish a key exchange and send a new keys message"""
+
+            self._kex_complete = True
 
             self.send_packet(MSG_SERVICE_ACCEPT, String('ssh-userauth'))
 
@@ -1435,6 +1441,8 @@ class _TestConnection(ServerTestCase):
 
         def send_newkeys(self, k, h):
             """Finish a key exchange and send a new keys message"""
+
+            self._kex_complete = True
 
             self.send_packet(MSG_USERAUTH_REQUEST, String('guest'),
                              String('ssh-connection'), String('none'))

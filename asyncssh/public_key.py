@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2023 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -20,7 +20,9 @@
 
 """SSH asymmetric encryption handlers"""
 
+import asyncio
 import binascii
+import inspect
 import os
 import re
 import time
@@ -3472,7 +3474,8 @@ def load_keypairs(
         keylist: KeyPairListArg, passphrase: Optional[BytesOrStr] = None,
         certlist: CertListArg = (), skip_public: bool = False,
         ignore_encrypted: bool = False,
-        unsafe_skip_rsa_key_validation: Optional[bool] = None) -> \
+        unsafe_skip_rsa_key_validation: Optional[bool] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None) -> \
             Sequence[SSHKeyPair]:
     """Load SSH private keys and optional matching certificates
 
@@ -3485,7 +3488,8 @@ def load_keypairs(
        :param keylist:
            The list of private keys and certificates to load.
        :param passphrase: (optional)
-           The passphrase to use to decrypt private keys.
+           The passphrase to use to decrypt the keys, or a `callable` which
+           takes a filename and returns the passphrase to decrypt it.
        :param certlist: (optional)
            A list of certificates to attempt to pair with the provided
            list of private keys.
@@ -3515,9 +3519,23 @@ def load_keypairs(
 
     if isinstance(keylist, (PurePath, str)):
         try:
-            priv_keys = read_private_key_list(keylist, passphrase,
+            if callable(passphrase):
+                resolved_passphrase = passphrase(str(keylist))
+            else:
+                resolved_passphrase = passphrase
+
+            if loop and inspect.isawaitable(resolved_passphrase):
+                resolved_passphrase = asyncio.run_coroutine_threadsafe(
+                    resolved_passphrase, loop).result()
+
+            priv_keys = read_private_key_list(keylist, resolved_passphrase,
                                               unsafe_skip_rsa_key_validation)
-            keys_to_load = [keylist] if len(priv_keys) <= 1 else priv_keys
+
+            if len(priv_keys) <= 1:
+                keys_to_load = [keylist]
+                passphrase = resolved_passphrase
+            else:
+                keys_to_load = priv_keys
         except KeyImportError:
             keys_to_load = [keylist]
     elif isinstance(keylist, (tuple, bytes, SSHKey, SSHKeyPair)):
@@ -3543,15 +3561,24 @@ def load_keypairs(
             if isinstance(key_to_load, (PurePath, str)):
                 key_prefix = str(key_to_load)
 
+                if callable(passphrase):
+                    resolved_passphrase = passphrase(key_prefix)
+                else:
+                    resolved_passphrase = passphrase
+
+                if loop and inspect.isawaitable(resolved_passphrase):
+                    resolved_passphrase = asyncio.run_coroutine_threadsafe(
+                        resolved_passphrase, loop).result()
+
                 if allow_certs:
                     key, certs_to_load = read_private_key_and_certs(
-                        key_to_load, passphrase,
+                        key_to_load, resolved_passphrase,
                         unsafe_skip_rsa_key_validation)
 
                     if not certs_to_load:
                         certs_to_load = key_prefix + '-cert.pub'
                 else:
-                    key = read_private_key(key_to_load, passphrase,
+                    key = read_private_key(key_to_load, resolved_passphrase,
                                            unsafe_skip_rsa_key_validation)
 
                 pubkey_to_load = key_prefix + '.pub'

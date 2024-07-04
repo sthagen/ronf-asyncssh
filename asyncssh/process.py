@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2023 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2016-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -33,7 +33,7 @@ from types import TracebackType
 from typing import Any, AnyStr, Awaitable, Callable, Dict, Generic, IO
 from typing import Iterable, List, Mapping, Optional, Set, TextIO
 from typing import Tuple, Type, TypeVar, Union, cast
-from typing_extensions import Protocol
+from typing_extensions import Protocol, Self
 
 from .channel import SSHChannel, SSHClientChannel, SSHServerChannel
 
@@ -41,16 +41,15 @@ from .constants import DEFAULT_LANG, EXTENDED_DATA_STDERR
 
 from .logging import SSHLogger
 
-from .misc import BytesOrStr, Error, MaybeAwait
-from .misc import ProtocolError, Record, open_file
+from .misc import BytesOrStr, Error, MaybeAwait, TermModes, TermSize
+from .misc import ProtocolError, Record, open_file, set_terminal_size
 from .misc import BreakReceived, SignalReceived, TerminalSizeChanged
 
-from .session import DataType, TermModes, TermSize
+from .session import DataType
 
 from .stream import SSHReader, SSHWriter, SSHStreamSession
 from .stream import SSHClientStreamSession, SSHServerStreamSession
 from .stream import SFTPServerFactory
-
 
 _AnyStrContra = TypeVar('_AnyStrContra', bytes, str, contravariant=True)
 
@@ -64,6 +63,10 @@ ProcessTarget = Union[int, str, socket.socket, PurePath, SSHWriter[bytes],
 
 SSHServerProcessFactory = Callable[['SSHServerProcess[AnyStr]'],
                                    MaybeAwait[None]]
+
+
+_QUEUE_LOW_WATER = 8
+_QUEUE_HIGH_WATER = 16
 
 
 class _AsyncFileProtocol(Protocol[AnyStr]):
@@ -305,12 +308,14 @@ class _AsyncFileWriter(_UnicodeWriter[AnyStr]):
 
     def __init__(self, process: 'SSHProcess[AnyStr]',
                  file: _AsyncFileProtocol[bytes], needs_close: bool,
-                 encoding: Optional[str], errors: str):
+                 datatype: Optional[int], encoding: Optional[str], errors: str):
         super().__init__(encoding, errors, hasattr(file, 'encoding'))
 
         self._process: 'SSHProcess[AnyStr]' = process
         self._file = file
         self._needs_close = needs_close
+        self._datatype = datatype
+        self._paused = False
         self._queue: asyncio.Queue[Optional[AnyStr]] = asyncio.Queue()
         self._write_task: Optional[asyncio.Task[None]] = \
             process.channel.get_connection().create_task(self._writer())
@@ -328,6 +333,10 @@ class _AsyncFileWriter(_UnicodeWriter[AnyStr]):
             await self._file.write(self.encode(data))
             self._queue.task_done()
 
+            if self._paused and self._queue.qsize() < _QUEUE_LOW_WATER:
+                self._process.resume_feeding(self._datatype)
+                self._paused = False
+
         if self._needs_close:
             await self._file.close()
 
@@ -335,6 +344,10 @@ class _AsyncFileWriter(_UnicodeWriter[AnyStr]):
         """Write data to the file"""
 
         self._queue.put_nowait(data)
+
+        if not self._paused and self._queue.qsize() >= _QUEUE_HIGH_WATER:
+            self._paused = True
+            self._process.pause_feeding(self._datatype)
 
     def write_eof(self) -> None:
         """Close output file when end of file is received"""
@@ -365,6 +378,12 @@ class _PipeReader(_UnicodeReader[AnyStr], asyncio.BaseProtocol):
         """Handle a newly opened pipe"""
 
         self._transport = cast(asyncio.ReadTransport, transport)
+
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        """Handle closing of the pipe"""
+
+        self._process.feed_close(self._datatype)
+        self.close()
 
     def data_received(self, data: bytes) -> None:
         """Forward data from the pipe"""
@@ -400,18 +419,30 @@ class _PipeWriter(_UnicodeWriter[AnyStr], asyncio.BaseProtocol):
     """Forward data to a pipe"""
 
     def __init__(self, process: 'SSHProcess[AnyStr]', datatype: DataType,
-                 needs_close: bool, encoding: Optional[str], errors: str):
+                 encoding: Optional[str], errors: str):
         super().__init__(encoding, errors)
 
         self._process: 'SSHProcess[AnyStr]' = process
         self._datatype = datatype
-        self._needs_close = needs_close
         self._transport: Optional[asyncio.WriteTransport] = None
+        self._tty: Optional[IO] = None
+        self._close_event = asyncio.Event()
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Handle a newly opened pipe"""
 
         self._transport = cast(asyncio.WriteTransport, transport)
+
+        pipe = transport.get_extra_info('pipe')
+
+        if isinstance(self._process, SSHServerProcess) and pipe.isatty():
+            self._tty = pipe
+            set_terminal_size(pipe, *self._process.term_size)
+
+    def connection_lost(self, exc: Optional[Exception]) -> None:
+        """Handle closing of the pipe"""
+
+        self._close_event.set()
 
     def pause_writing(self) -> None:
         """Pause writing to the pipe"""
@@ -429,6 +460,12 @@ class _PipeWriter(_UnicodeWriter[AnyStr], asyncio.BaseProtocol):
         assert self._transport is not None
         self._transport.write(self.encode(data))
 
+    def write_exception(self, exc: Exception) -> None:
+        """Write terminal size changes to the pipe if it is a TTY"""
+
+        if isinstance(exc, TerminalSizeChanged) and self._tty:
+            set_terminal_size(self._tty, *exc.term_size)
+
     def write_eof(self) -> None:
         """Write EOF to the pipe"""
 
@@ -439,18 +476,8 @@ class _PipeWriter(_UnicodeWriter[AnyStr], asyncio.BaseProtocol):
         """Stop forwarding data to the pipe"""
 
         assert self._transport is not None
-
-        # There's currently no public API to tell connect_write_pipe()
-        # to not close the pipe on when the created transport is closed,
-        # and not closing it triggers an "unclosed transport" warning.
-        # This masks that warning when we want to keep the pipe open.
-        #
-        # pylint: disable=protected-access
-
-        if self._needs_close:
-            self._transport.close()
-        else:
-            self._transport._pipe = None # type: ignore
+        self._transport.close()
+        self._process.add_cleanup_task(self._close_event.wait())
 
 
 class _ProcessReader(_ReaderProtocol, Generic[AnyStr]):
@@ -558,24 +585,62 @@ class _StreamReader(_UnicodeReader[AnyStr]):
 class _StreamWriter(_UnicodeWriter[AnyStr]):
     """Forward data to an asyncio stream"""
 
-    def __init__(self, writer: asyncio.StreamWriter,
-                 encoding: Optional[str], errors: str):
+    def __init__(self, process: 'SSHProcess[AnyStr]',
+                 writer: asyncio.StreamWriter, recv_eof: bool,
+                 datatype: Optional[int], encoding: Optional[str], errors: str):
         super().__init__(encoding, errors)
 
+        self._process: 'SSHProcess[AnyStr]' = process
         self._writer = writer
+        self._recv_eof = recv_eof
+        self._datatype = datatype
+        self._paused = False
+        self._queue: asyncio.Queue[Optional[AnyStr]] = asyncio.Queue()
+        self._write_task: Optional[asyncio.Task[None]] = \
+            process.channel.get_connection().create_task(self._feed())
+
+    async def _feed(self) -> None:
+        """Feed data to the stream"""
+
+        while True:
+            data = await self._queue.get()
+
+            if data is None:
+                self._queue.task_done()
+                break
+
+            self._writer.write(self.encode(data))
+            await self._writer.drain()
+            self._queue.task_done()
+
+            if self._paused and self._queue.qsize() < _QUEUE_LOW_WATER:
+                self._process.resume_feeding(self._datatype)
+                self._paused = False
+
+        if self._recv_eof:
+            self._writer.write_eof()
 
     def write(self, data: AnyStr) -> None:
         """Write data to the stream"""
 
-        self._writer.write(self.encode(data))
+        self._queue.put_nowait(data)
+
+        if not self._paused and self._queue.qsize() >= _QUEUE_HIGH_WATER:
+            self._paused = True
+            self._process.pause_feeding(self._datatype)
 
     def write_eof(self) -> None:
         """Write EOF to the stream"""
 
-        self._writer.write_eof()
+        self.close()
 
     def close(self) -> None:
-        """Ignore close -- the caller must clean up the associated transport"""
+        """Stop forwarding data to the stream"""
+
+        if self._write_task:
+            self._write_task = None
+            self._queue.put_nowait(None)
+            self._process.add_cleanup_task(self._queue.join())
 
 
 class _DevNullWriter(_WriterProtocol[AnyStr]):
@@ -752,7 +817,7 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
 
         self._paused_write_streams: Set[Optional[int]] = set()
 
-    async def __aenter__(self) -> 'SSHProcess[AnyStr]':
+    async def __aenter__(self) -> Self:
         """Allow SSHProcess to be used as an async context manager"""
 
         return self
@@ -897,8 +962,7 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
         def pipe_factory() -> _PipeWriter:
             """Return a pipe write handler"""
 
-            return _PipeWriter(self, datatype, recv_eof,
-                               self._encoding, self._errors)
+            return _PipeWriter(self, datatype, self._encoding, self._errors)
 
         if target == PIPE:
             writer: Optional[_WriterProtocol[AnyStr]] = None
@@ -913,7 +977,8 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
             writer_process.set_reader(reader, send_eof, writer_datatype)
             writer = _ProcessWriter[AnyStr](writer_process, writer_datatype)
         elif isinstance(target, asyncio.StreamWriter):
-            writer = _StreamWriter(target, self._encoding, self._errors)
+            writer = _StreamWriter(self, target, recv_eof, datatype,
+                                   self._encoding, self._errors)
         else:
             file: _File
             needs_close = True
@@ -937,7 +1002,7 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
                      inspect.isgeneratorfunction(file.write)):
                 writer = _AsyncFileWriter(
                     self, cast(_AsyncFileProtocol, file), needs_close,
-                    self._encoding, self._errors)
+                    datatype, self._encoding, self._errors)
             elif _is_regular_file(cast(IO[bytes], file)):
                 writer = _FileWriter(cast(IO[bytes], file), needs_close,
                                     self._encoding, self._errors)
@@ -945,6 +1010,10 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
                 if hasattr(target, 'buffer'):
                     # If file was opened in text mode, remove that wrapper
                     file = cast(TextIO, target).buffer
+
+                if not recv_eof:
+                    fd = os.dup(cast(IO[bytes], file).fileno())
+                    file = os.fdopen(fd, 'wb', buffering=0)
 
                 assert self._loop is not None
                 _, protocol = \
@@ -968,7 +1037,7 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
         return bool(self._paused_write_streams) or \
             super()._should_pause_reading()
 
-    def add_cleanup_task(self, task: Awaitable[None]) -> None:
+    def add_cleanup_task(self, task: Awaitable) -> None:
         """Add a task to run when the process exits"""
 
         self._cleanup_tasks.append(task)
@@ -1037,6 +1106,12 @@ class SSHProcess(SSHStreamSession, Generic[AnyStr]):
 
         self._readers[datatype].close()
         self.clear_reader(datatype)
+
+    def feed_close(self, datatype: DataType) -> None:
+        """Feed pipe close to the channel"""
+
+        if datatype in self._readers:
+            self.feed_eof(datatype)
 
     def feed_recv_buf(self, datatype: DataType,
                       writer: _WriterProtocol[AnyStr]) -> None:
@@ -1263,6 +1338,14 @@ class SSHClientProcess(SSHProcess[AnyStr], SSHClientStreamSession[AnyStr]):
 
            The default value of `None` means to not change redirection
            for that stream.
+
+           .. note:: While it is legal to use buffered I/O streams such
+                     as sys.stdin, sys.stdout, and sys.stderr as redirect
+                     targets, you must make sure buffers are flushed
+                     before redirection begins and that these streams
+                     are put back into blocking mode before attempting
+                     to go back using buffered I/O again. Also, no buffered
+                     I/O should be performed while redirection is active.
 
            .. note:: When passing in asyncio streams, it is the responsibility
                      of the caller to close the associated transport when it
