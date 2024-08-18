@@ -31,8 +31,10 @@
 # pylint: disable=deprecated-module
 import stringprep
 # pylint: enable=deprecated-module
-from typing import Callable, Optional, Sequence
 import unicodedata
+
+from typing import Callable, Optional, Sequence
+from typing_extensions import Literal
 
 
 class SASLPrepError(ValueError):
@@ -62,7 +64,7 @@ def _check_bidi(s: str) -> None:
 
 def _stringprep(s: str, check_unassigned: bool,
                 mapping: Optional[Callable[[str], str]],
-                normalization: str,
+                normalization: Literal['NFC', 'NFD', 'NFKC', 'NFKD'],
                 prohibited: Sequence[Callable[[str], bool]],
                 bidi: bool) -> str:
     """Implement a stringprep profile as defined in RFC 3454"""

@@ -321,11 +321,15 @@ class SSHConfig:
 
                 args = []
                 loption = ''
+                allow_equal = True
 
                 for i, arg in enumerate(split_args, 1):
                     if arg.startswith('='):
                         if len(arg) > 1:
                             args.append(arg[1:])
+                    elif not allow_equal:
+                        args.extend(split_args[i-1:])
+                        break
                     elif arg.endswith('='):
                         args.append(arg[:-1])
                     elif '=' in arg:
@@ -337,9 +341,7 @@ class SSHConfig:
 
                     if i == 1:
                         loption = args.pop(0).lower()
-                    elif i > 1 and loption not in self._conditionals:
-                        args.extend(split_args[i:])
-                        break
+                        allow_equal = loption in self._conditionals
 
                 if loption in self._no_split:
                     args = [line.lstrip()[len(loption):].strip()]
@@ -423,7 +425,7 @@ class SSHClientConfig(SSHConfig):
     """Settings from an OpenSSH client config file"""
 
     _conditionals = {'host', 'match'}
-    _no_split = {'remotecommand'}
+    _no_split = {'proxycommand', 'remotecommand'}
     _percent_expand = {'CertificateFile', 'IdentityAgent',
                        'IdentityFile', 'ProxyCommand', 'RemoteCommand'}
 
@@ -557,7 +559,7 @@ class SSHClientConfig(SSHConfig):
         ('PKCS11Provider',                  SSHConfig._set_string),
         ('PreferredAuthentications',        SSHConfig._set_string),
         ('Port',                            SSHConfig._set_int),
-        ('ProxyCommand',                    SSHConfig._set_string_list),
+        ('ProxyCommand',                    SSHConfig._set_string),
         ('ProxyJump',                       SSHConfig._set_string),
         ('PubkeyAuthentication',            SSHConfig._set_bool),
         ('RekeyLimit',                      SSHConfig._set_rekey_limits),
