@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2023 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -38,6 +38,14 @@ class SSHClient:
        Applications may subclass this when implementing an SSH client
        to receive callbacks when certain events occur on the SSH
        connection.
+
+       Whenever a new SSH client connection is opened, a corresponding
+       SSHClient object is created and the method :meth:`connection_made`
+       is called, passing in the :class:`SSHClientConnection` object.
+
+       When the connection is closed, the method :meth:`connection_lost`
+       is called with an exception representing the reason for the
+       disconnect, or `None` if the connection was closed cleanly.
 
        For simple password or public key based authentication, nothing
        needs to be defined here if the password or client keys are passed

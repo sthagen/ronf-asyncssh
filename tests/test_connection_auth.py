@@ -22,6 +22,7 @@
 
 import asyncio
 import os
+import sys
 import unittest
 
 from unittest.mock import patch
@@ -457,11 +458,13 @@ class _TestNullAuth(ServerTestCase):
 class _TestGSSAuth(ServerTestCase):
     """Unit tests for GSS authentication"""
 
+    @unittest.skipIf(sys.platform == 'win32', 'skip GSS store test on Windows')
     @classmethod
     async def start_server(cls):
         """Start an SSH server which supports GSS authentication"""
 
-        return await cls.create_server(_AsyncGSSServer, gss_host='1')
+        return await cls.create_server(_AsyncGSSServer, gss_host='1',
+                                       gss_store='a')
 
     @asynctest
     async def test_get_server_auth_methods(self):
@@ -486,6 +489,15 @@ class _TestGSSAuth(ServerTestCase):
 
         async with self.connect(kex_algs=['ecdh-sha2-nistp256'],
                                 username='user', gss_host='1'):
+            pass
+
+    @unittest.skipIf(sys.platform == 'win32', 'skip GSS store test on Windows')
+    @asynctest
+    async def test_gss_mic_auth_store(self):
+        """Test GSS MIC authentication with GSS store set"""
+
+        async with self.connect(kex_algs=['ecdh-sha2-nistp256'],
+                                username='user', gss_host='1', gss_store='a'):
             pass
 
     @asynctest
