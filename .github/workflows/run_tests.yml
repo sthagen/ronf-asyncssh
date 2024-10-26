@@ -38,7 +38,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     env:
-      liboqs_version: '0.7.2'
+      liboqs_version: '0.10.1'
       nettle_version: nettle_3.8.1_release_20220727
 
     steps:
@@ -130,6 +130,7 @@ jobs:
         with:
           name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
           path: asyncssh/.coverage.*
+          include-hidden-files: true
           retention-days: 1
 
   merge-coverage:
@@ -142,6 +143,7 @@ jobs:
         with:
           name: coverage
           pattern: coverage-*
+          include-hidden-files: true
 
   report-coverage:
     name: Report coverage

@@ -109,7 +109,7 @@ from .sftp import SFTPByteRangeLockRefused, SFTPDeletePending
 from .sftp import SFTPFileCorrupt, SFTPOwnerInvalid, SFTPGroupInvalid
 from .sftp import SFTPNoMatchingByteRangeLock
 from .sftp import SFTPConnectionLost, SFTPOpUnsupported
-from .sftp import SFTPAttrs, SFTPVFSAttrs, SFTPName
+from .sftp import SFTPAttrs, SFTPVFSAttrs, SFTPName, SFTPLimits
 from .sftp import SEEK_SET, SEEK_CUR, SEEK_END
 
 from .stream import SSHSocketSessionFactory, SSHServerSessionFactory
@@ -122,6 +122,7 @@ from .subprocess import SSHSubprocessProtocol, SSHSubprocessTransport
 from . import sk_eddsa, sk_ecdsa, eddsa, ecdsa, rsa, dsa, kex_dh, kex_rsa
 
 __all__ = [
+    '__author__', '__author_email__', '__url__', '__version__',
     'BreakReceived', 'BytesOrStr', 'ChannelListenError',
     'ChannelOpenError', 'CompressionError', 'ConfigParseError',
     'ConnectionLost', 'DEVNULL', 'DataType', 'DisconnectError', 'Error',
@@ -136,15 +137,15 @@ __all__ = [
     'SFTPDirNotEmpty', 'SFTPEOFError', 'SFTPError', 'SFTPFailure',
     'SFTPFileAlreadyExists', 'SFTPFileCorrupt', 'SFTPFileIsADirectory',
     'SFTPGroupInvalid', 'SFTPInvalidFilename', 'SFTPInvalidHandle',
-    'SFTPInvalidParameter', 'SFTPLinkLoop', 'SFTPLockConflict', 'SFTPName',
-    'SFTPNoConnection', 'SFTPNoMatchingByteRangeLock', 'SFTPNoMedia',
-    'SFTPNoSpaceOnFilesystem', 'SFTPNoSuchFile', 'SFTPNoSuchPath',
-    'SFTPNotADirectory', 'SFTPOpUnsupported', 'SFTPOwnerInvalid',
-    'SFTPPermissionDenied', 'SFTPQuotaExceeded', 'SFTPServer',
-    'SFTPServerFactory', 'SFTPUnknownPrincipal', 'SFTPVFSAttrs',
-    'SFTPWriteProtect', 'SSHAcceptor', 'SSHAgentClient', 'SSHAgentKeyPair',
-    'SSHAuthorizedKeys', 'SSHCertificate', 'SSHClient', 'SSHClientChannel',
-    'SSHClientConnection', 'SSHClientConnectionOptions',
+    'SFTPInvalidParameter', 'SFTPLimits', 'SFTPLinkLoop', 'SFTPLockConflict',
+    'SFTPName', 'SFTPNoConnection', 'SFTPNoMatchingByteRangeLock',
+    'SFTPNoMedia', 'SFTPNoSpaceOnFilesystem', 'SFTPNoSuchFile',
+    'SFTPNoSuchPath', 'SFTPNotADirectory', 'SFTPOpUnsupported',
+    'SFTPOwnerInvalid', 'SFTPPermissionDenied', 'SFTPQuotaExceeded',
+    'SFTPServer', 'SFTPServerFactory', 'SFTPUnknownPrincipal', 'SFTPVFSAttrs',
+    'SFTPWriteProtect', 'SSHAcceptHandler', 'SSHAcceptor', 'SSHAgentClient',
+    'SSHAgentKeyPair', 'SSHAuthorizedKeys', 'SSHCertificate', 'SSHClient',
+    'SSHClientChannel', 'SSHClientConnection', 'SSHClientConnectionOptions',
     'SSHClientProcess', 'SSHClientSession', 'SSHCompletedProcess',
     'SSHForwarder', 'SSHKey', 'SSHKeyPair', 'SSHKnownHosts',
     'SSHLineEditorChannel', 'SSHListener', 'SSHReader', 'SSHServer',

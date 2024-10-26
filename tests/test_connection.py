@@ -418,6 +418,24 @@ class _TestConnection(ServerTestCase):
         async with asyncssh.connect(sock=sock):
             pass
 
+    @unittest.skipUnless(nc_available, 'Netcat not available')
+    @asynctest
+    async def test_connect_non_tcp_sock(self):
+        """Test connecting using an non-TCP socket"""
+
+        sock1, sock2 = socket.socketpair()
+
+        proc = await asyncio.create_subprocess_exec(
+            'nc', str(self._server_addr), str(self._server_port),
+            stdin=sock1, stdout=sock1, stderr=sock1)
+
+        async with asyncssh.connect(
+                self._server_addr, self._server_port, sock=sock2):
+            pass
+
+        await proc.wait()
+        sock1.close()
+
     @asynctest
     async def test_run_client(self):
         """Test running an SSH client on an already-connected socket"""
@@ -689,6 +707,16 @@ class _TestConnection(ServerTestCase):
             self.assertEqual(conn.get_server_host_key_algs(), default_algs)
 
     @asynctest
+    async def test_known_hosts_none_in_config(self):
+        """Test connecting with known hosts checking disabled in config file"""
+
+        with open('config', 'w') as f:
+            f.write('UserKnownHostsFile none')
+
+        async with self.connect(config='config'):
+            pass
+
+    @asynctest
     async def test_known_hosts_none_without_x509(self):
         """Test connecting with known hosts checking and X.509 disabled"""
 
@@ -770,7 +798,7 @@ class _TestConnection(ServerTestCase):
 
         known_hosts_path = os.path.join('.ssh', 'known_hosts')
 
-        with open(known_hosts_path, 'r') as f:
+        with open(known_hosts_path) as f:
             known_hosts = asyncssh.import_known_hosts(f.read())
 
         async with self.connect(known_hosts=known_hosts):
@@ -984,7 +1012,7 @@ class _TestConnection(ServerTestCase):
 
         with patch('asyncssh.connection.SSHClientConnection.send_newkeys',
                    send_newkeys):
-            with self.assertRaises(asyncssh.ProtocolError):
+            with self.assertRaises((ConnectionError, asyncssh.ProtocolError)):
                 await self.connect()
 
     @asynctest
@@ -1241,6 +1269,24 @@ class _TestConnection(ServerTestCase):
                    send_newkeys):
             with self.assertRaises(asyncssh.ProtocolError):
                 await self.connect()
+
+    @asynctest
+    async def test_client_decompression_failure(self):
+        """Test client decompression failure"""
+
+        def send_packet(self, pkttype, *args, **kwargs):
+            """Send an SSH packet"""
+
+            asyncssh.connection.SSHConnection.send_packet(
+                self, pkttype, *args, **kwargs)
+
+            if pkttype == MSG_USERAUTH_SUCCESS:
+                self._compressor = None
+                self.send_debug('Test')
+
+        with patch('asyncssh.connection.SSHServerConnection.send_packet',
+                   send_packet):
+            await self.connect(compression_algs=['zlib@openssh.com'])
 
     @asynctest
     async def test_packet_decode_error(self):

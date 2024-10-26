@@ -25,6 +25,7 @@ import binascii
 import functools
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -104,6 +105,19 @@ def patch_getnameinfo(cls):
         return ('localhost', sockaddr[1])
 
     return patch('socket.getnameinfo', getnameinfo)(cls)
+
+
+def patch_getnameinfo_error(cls):
+    """Decorator for patching socket.getnameinfo to raise an error"""
+
+    def getnameinfo_error(sockaddr, flags):
+        """Mock failure of reverse DNS lookup of client address"""
+
+        # pylint: disable=unused-argument
+
+        raise socket.gaierror()
+
+    return patch('socket.getnameinfo', getnameinfo_error)(cls)
 
 
 def patch_extra_kex(cls):
@@ -202,7 +216,7 @@ def make_certificate(cert_version, cert_type, key, signing_key, principals,
     """Construct an SSH certificate"""
 
     keydata = key.encode_ssh_public()
-    principals = b''.join((String(p) for p in principals))
+    principals = b''.join(String(p) for p in principals)
     options = _encode_options(options) if options else b''
     extensions = _encode_options(extensions) if extensions else b''
     signing_keydata = b''.join((String(signing_key.algorithm),
@@ -309,7 +323,7 @@ class ConnectionStub:
                 self.connection_lost(data)
                 break
 
-            self.process_packet(data)
+            await self.process_packet(data)
 
     def connection_lost(self, exc):
         """Handle the closing of a connection"""

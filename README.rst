@@ -57,8 +57,7 @@ Features
 * Byte and string based I/O with settable encoding
 * A variety of `key exchange`__, `encryption`__, and `MAC`__ algorithms
 
-  * Including OpenSSH post-quantum kex algorithm
-    sntrup761x25519-sha512\@openssh.com
+  * Including post-quantum kex algorithms ML-KEM and SNTRUP
 
 * Support for `gzip compression`__
 
@@ -102,7 +101,7 @@ License
 
 This package is released under the following terms:
 
-  Copyright (c) 2013-2022 by Ron Frederick <ronf@timeheart.net> and others.
+  Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
 
   This program and the accompanying materials are made available under
   the terms of the Eclipse Public License v2.0 which accompanies this
@@ -159,7 +158,7 @@ functionality:
 
 * Install liboqs from https://github.com/open-quantum-safe/liboqs
   if you want support for the OpenSSH post-quantum key exchange
-  algorithm sntrup761x25519-sha512\@openssh.com.
+  algorithms based on ML-KEM and SNTRUP.
 
 * Install libsodium from https://github.com/jedisct1/libsodium
   and libnacl from https://pypi.python.org/pypi/libnacl if you have

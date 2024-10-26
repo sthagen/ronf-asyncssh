@@ -42,7 +42,7 @@ from .misc import async_context_manager, plural
 from .sftp import SFTPAttrs, SFTPGlob, SFTPName, SFTPServer, SFTPServerFS
 from .sftp import SFTPFileProtocol, SFTPError, SFTPFailure, SFTPBadMessage
 from .sftp import SFTPConnectionLost, SFTPErrorHandler, SFTPProgressHandler
-from .sftp import SFTP_BLOCK_SIZE, local_fs
+from .sftp import local_fs
 
 
 if TYPE_CHECKING:
@@ -55,6 +55,9 @@ if TYPE_CHECKING:
 _SCPConn = Union[None, bytes, str, HostPort, 'SSHClientConnection']
 _SCPPath = Union[bytes, FilePath]
 _SCPConnPath = Union[Tuple[_SCPConn, _SCPPath], _SCPConn, _SCPPath]
+
+
+_SCP_BLOCK_SIZE = 256*1024    # 256 KiB
 
 
 class _SCPFSProtocol(Protocol):
@@ -383,10 +386,10 @@ class _SCPHandler:
 
         self.logger.debug1('Handling SCP error: %s', str(exc))
 
-        if getattr(exc, 'fatal', False) or self._error_handler is None:
-            raise exc from None
-        elif self._error_handler:
+        if self._error_handler and not getattr(exc, 'fatal', False):
             self._error_handler(exc)
+        elif not self._server:
+            raise exc
 
     async def close(self, cancelled: bool = False) -> None:
         """Close an SCP session"""
@@ -395,12 +398,13 @@ class _SCPHandler:
 
         if cancelled:
             self._writer.channel.abort()
-        elif self._server:
-            cast('SSHServerChannel', self._writer.channel).exit(0)
         else:
-            self._writer.close()
+            if self._server:
+                cast('SSHServerChannel', self._writer.channel).exit(0)
+            else:
+                self._writer.close()
 
-        await self._writer.channel.wait_closed()
+            await self._writer.wait_closed()
 
 
 class _SCPSource(_SCPHandler):
@@ -408,7 +412,7 @@ class _SCPSource(_SCPHandler):
 
     def __init__(self, fs: _SCPFSProtocol, reader: 'SSHReader[bytes]',
                  writer: 'SSHWriter[bytes]', preserve: bool, recurse: bool,
-                 block_size: int = SFTP_BLOCK_SIZE,
+                 block_size: int = _SCP_BLOCK_SIZE,
                  progress_handler: SFTPProgressHandler = None,
                  error_handler: SFTPErrorHandler = None, server: bool = False):
         super().__init__(reader, writer, error_handler, server)
@@ -425,7 +429,7 @@ class _SCPSource(_SCPHandler):
 
         assert attrs.permissions is not None
 
-        args = '%04o %d ' % (attrs.permissions & 0o7777, size)
+        args = f'{attrs.permissions & 0o7777:04o} {size} '
         await self.make_request(action, args.encode('ascii'),
                                 self._fs.basename(path))
 
@@ -438,7 +442,7 @@ class _SCPSource(_SCPHandler):
         assert attrs.mtime is not None
         assert attrs.atime is not None
 
-        args = '%d 0 %d 0' % (attrs.mtime, attrs.atime)
+        args = f'{attrs.mtime} 0 {attrs.atime} 0'
         await self.make_request(b'T', args.encode('ascii'))
 
     async def _send_file(self, srcpath: bytes,
@@ -567,7 +571,7 @@ class _SCPSink(_SCPHandler):
 
     def __init__(self, fs: _SCPFSProtocol, reader: 'SSHReader[bytes]',
                  writer: 'SSHWriter[bytes]', must_be_dir: bool, preserve: bool,
-                 recurse: bool, block_size: int = SFTP_BLOCK_SIZE,
+                 recurse: bool, block_size: int = _SCP_BLOCK_SIZE,
                  progress_handler: SFTPProgressHandler = None,
                  error_handler: SFTPErrorHandler = None, server: bool = False):
         super().__init__(reader, writer, error_handler, server)
@@ -665,7 +669,8 @@ class _SCPSink(_SCPHandler):
 
             try:
                 if action in b'\x01\x02':
-                    raise _scp_error(SFTPFailure, args, fatal=action != b'\x01',
+                    raise _scp_error(SFTPFailure, args,
+                                     fatal=action != b'\x01',
                                      suppress_send=True)
                 elif action == b'T':
                     if self._preserve:
@@ -719,7 +724,7 @@ class _SCPSink(_SCPHandler):
                                              dstpath))
             else:
                 await self._recv_files(b'', dstpath)
-        except asyncio.CancelledError as exc:
+        except asyncio.CancelledError:
             cancelled = True
         except (OSError, SFTPError, ValueError) as exc:
             self.handle_error(exc)
@@ -734,7 +739,7 @@ class _SCPCopier:
                  src_writer: 'SSHWriter[bytes]',
                  dst_reader: 'SSHReader[bytes]',
                  dst_writer: 'SSHWriter[bytes]',
-                 block_size: int = SFTP_BLOCK_SIZE,
+                 block_size: int = _SCP_BLOCK_SIZE,
                  progress_handler: SFTPProgressHandler = None,
                  error_handler: SFTPErrorHandler = None):
         self._source = _SCPHandler(src_reader, src_writer)
@@ -754,7 +759,8 @@ class _SCPCopier:
         """Handle an SCP error"""
 
         if isinstance(exc, BrokenPipeError):
-            exc = _scp_error(SFTPConnectionLost, 'Connection lost', fatal=True)
+            exc = _scp_error(SFTPConnectionLost, 'Connection lost',
+                             fatal=True, suppress_send=True)
 
         self.logger.debug1('Handling SCP error: %s', str(exc))
 
@@ -797,7 +803,7 @@ class _SCPCopier:
 
             if not data:
                 raise _scp_error(SFTPConnectionLost, 'Connection lost',
-                                 fatal=True)
+                                 fatal=True, suppress_send=True)
 
             await self._sink.send_data(data)
             offset += len(data)
@@ -895,7 +901,7 @@ class _SCPCopier:
 
 async def scp(srcpaths: Union[_SCPConnPath, Sequence[_SCPConnPath]],
               dstpath: _SCPConnPath = None, *, preserve: bool = False,
-              recurse: bool = False, block_size: int = SFTP_BLOCK_SIZE,
+              recurse: bool = False, block_size: int = _SCP_BLOCK_SIZE,
               progress_handler: SFTPProgressHandler = None,
               error_handler: SFTPErrorHandler = None, **kwargs) -> None:
     """Copy files using SCP
@@ -952,7 +958,7 @@ async def scp(srcpaths: Union[_SCPConnPath, Sequence[_SCPConnPath]],
        SFTP instead.
 
        The block_size value controls the size of read and write operations
-       issued to copy the files. It defaults to 16 KB.
+       issued to copy the files. It defaults to 256 KB.
 
        If progress_handler is specified, it will be called after each
        block of a file is successfully copied. The arguments passed to

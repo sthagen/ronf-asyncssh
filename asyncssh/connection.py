@@ -105,16 +105,16 @@ from .logging import SSHLogger, logger
 
 from .mac import get_mac_algs, get_default_mac_algs
 
-from .misc import BytesOrStr, BytesOrStrDict, DefTuple, FilePath, HostPort
-from .misc import IPNetwork, MaybeAwait, OptExcInfo, Options, SockAddr
+from .misc import BytesOrStr, BytesOrStrDict, DefTuple, Env, EnvSeq, FilePath
+from .misc import HostPort, IPNetwork, MaybeAwait, OptExcInfo, Options, SockAddr
 from .misc import ChannelListenError, ChannelOpenError, CompressionError
 from .misc import DisconnectError, ConnectionLost, HostKeyNotVerifiable
 from .misc import KeyExchangeFailed, IllegalUserName, MACError
 from .misc import PasswordChangeRequired, PermissionDenied, ProtocolError
 from .misc import ProtocolNotSupported, ServiceNotAvailable
 from .misc import TermModesArg, TermSizeArg
-from .misc import async_context_manager, construct_disc_error
-from .misc import get_symbol_names, ip_address, map_handler_name
+from .misc import async_context_manager, construct_disc_error, encode_env
+from .misc import get_symbol_names, ip_address, lookup_env, map_handler_name
 from .misc import parse_byte_count, parse_time_interval, split_args
 
 from .packet import Boolean, Byte, NameList, String, UInt32, PacketDecodeError
@@ -223,9 +223,6 @@ _AuthArg = DefTuple[bool]
 _AuthKeysArg = DefTuple[Union[None, str, List[str], SSHAuthorizedKeys]]
 _ClientHostKey = Union[SSHKeyPair, SSHKeySignKeyPair]
 _ClientKeysArg = Union[KeyListArg, KeyPairListArg]
-
-_Env = Optional[Union[Mapping[str, str], Sequence[str]]]
-_SendEnv = Optional[Sequence[str]]
 
 _GlobalRequest = Tuple[Optional[_PacketHandler], SSHPacket, bool]
 _GlobalRequestResult = Tuple[int, SSHPacket]
@@ -560,8 +557,7 @@ def _expand_algs(alg_type: str, algs: str,
                    if pattern.matches(alg.decode('ascii'))]
 
         if not matches and strict_match:
-            raise ValueError('"%s" matches no valid %s algorithms' %
-                             (pat, alg_type))
+            raise ValueError(f'"{pat}" matches no valid {alg_type} algorithms')
 
         matched.extend(matches)
 
@@ -599,8 +595,8 @@ def _select_algs(alg_type: str, algs: _AlgsArg, config_algs: _AlgsArg,
 
         for alg in expanded_algs:
             if alg not in possible_algs:
-                raise ValueError('%s is not a valid %s algorithm' %
-                                 (alg.decode('ascii'), alg_type))
+                raise ValueError(f'{alg.decode("ascii")} is not a valid '
+                                 f'{alg_type} algorithm')
 
             if alg not in result:
                 result.append(alg)
@@ -609,7 +605,7 @@ def _select_algs(alg_type: str, algs: _AlgsArg, config_algs: _AlgsArg,
     elif none_value:
         return [none_value]
     else:
-        raise ValueError('No %s algorithms selected' % alg_type)
+        raise ValueError(f'No {alg_type} algorithms selected')
 
 
 def _select_host_key_algs(algs: _AlgsArg, config_algs: _AlgsArg,
@@ -728,7 +724,7 @@ class SSHAcceptor:
         if hasattr(self._server, 'get_port'):
             return self._server.get_port()
         else:
-            ports = set(addr[1] for addr in self.get_addresses())
+            ports = {addr[1] for addr in self.get_addresses()}
             return ports.pop() if len(ports) == 1 else 0
 
     def close(self) -> None:
@@ -932,8 +928,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         self._server_host_key_algs: Optional[Sequence[bytes]] = None
 
-        self._logger = logger.get_child(context='conn=%d' %
-                                        self._get_next_conn())
+        self._logger = logger.get_child(
+            context=f'conn={self._get_next_conn()}')
 
         self._login_timer: Optional[asyncio.TimerHandle]
 
@@ -1078,7 +1074,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if not self._transport:
             return
 
-        self._transport.abort()
+        self._loop.call_soon(self._transport.abort)
         self._transport = None
 
         self._loop.call_soon(self._cleanup, exc)
@@ -1272,7 +1268,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE,
                             self._tcp_keepalive)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+            if sock.family in (socket.AF_INET, socket.AF_INET6):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
         sockname = cast(SockAddr, transport.get_extra_info('sockname'))
 
@@ -1326,17 +1324,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         self._inpbuf += data
 
-        self._reset_keepalive_timer()
-
-        # pylint: disable=broad-except
-        try:
-            while self._inpbuf and self._recv_handler():
-                pass
-        except DisconnectError as exc:
-            self._send_disconnect(exc.code, exc.reason, exc.lang)
-            self._force_close(exc)
-        except Exception:
-            self.internal_error()
+        self._recv_data()
     # pylint: enable=arguments-differ
 
     def eof_received(self) -> None:
@@ -1405,9 +1393,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 return alg
 
         raise KeyExchangeFailed(
-            'No matching %s algorithm found, sent %s and received %s' %
-            (alg_type, b','.join(local_algs).decode('ascii'),
-             b','.join(remote_algs).decode('ascii')))
+            f'No matching {alg_type} algorithm found, sent '
+            f'{b",".join(local_algs).decode("ascii")} and received '
+            f'{b",".join(remote_algs).decode("ascii")}')
 
     def _get_extra_kex_algs(self) -> List[bytes]:
         """Return the extra kex algs to add"""
@@ -1423,7 +1411,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if self._transport:
             try:
                 self._transport.write(data)
-            except BrokenPipeError: # pragma: no cover
+            except ConnectionError: # pragma: no cover
                 pass
 
     def _send_version(self) -> None:
@@ -1441,6 +1429,21 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self.set_extra_info(server_version=version.decode('ascii'))
 
         self._send(version + b'\r\n')
+
+    def _recv_data(self) -> None:
+        """Parse received data"""
+
+        self._reset_keepalive_timer()
+
+        # pylint: disable=broad-except
+        try:
+            while self._inpbuf and self._recv_handler():
+                pass
+        except DisconnectError as exc:
+            self._send_disconnect(exc.code, exc.reason, exc.lang)
+            self._force_close(exc)
+        except Exception:
+            self.internal_error()
 
     def _recv_version(self) -> bool:
         """Receive and parse the remote SSH version"""
@@ -1564,7 +1567,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 MSG_IGNORE <= pkttype <= MSG_DEBUG:
             skip_reason = 'strict kex violation'
             exc_reason = 'Strict key exchange violation: ' \
-                         'unexpected packet type %d received' % pkttype
+                         f'unexpected packet type {pkttype} received'
         elif MSG_USERAUTH_FIRST <= pkttype <= MSG_USERAUTH_LAST:
             if self._auth:
                 handler = self._auth
@@ -1588,21 +1591,29 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                     handler = self._channels[recv_chan]
                 except KeyError:
                     skip_reason = 'invalid channel number'
-                    exc_reason = 'Invalid channel number %d ' \
-                                 'received' % recv_chan
+                    exc_reason = f'Invalid channel number {recv_chan} received'
 
         handler.log_received_packet(pkttype, seq, packet, skip_reason)
 
         if not skip_reason:
             try:
-                processed = handler.process_packet(pkttype, seq, packet)
+                result = handler.process_packet(pkttype, seq, packet)
             except PacketDecodeError as exc:
                 raise ProtocolError(str(exc)) from None
 
-            if not processed:
+            if inspect.isawaitable(result):
+                # Buffer received data until current packet is processed
+                self._recv_handler = lambda: False
+
+                task = self.create_task(result)
+                task.add_done_callback(functools.partial(
+                    self._finish_recv_packet, pkttype, seq, is_async=True))
+
+                return False
+            elif not result:
                 if self._strict_kex and not self._recv_encryption:
                     exc_reason = 'Strict key exchange violation: ' \
-                                 'unexpected packet type %d received' % pkttype
+                                 f'unexpected packet type {pkttype} received'
                 else:
                     self.logger.debug1('Unknown packet type %d received',
                                        pkttype)
@@ -1611,12 +1622,18 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         if exc_reason:
             raise ProtocolError(exc_reason)
 
+        self._finish_recv_packet(pkttype, seq)
+        return True
+
+    def _finish_recv_packet(self, pkttype: int, seq: int,
+                            _task: Optional[asyncio.Task] = None,
+                            is_async: bool = False) -> None:
+        """Finish processing a packet"""
+
         if pkttype > MSG_USERAUTH_LAST:
             self._auth_final = True
 
         if self._transport:
-            self._recv_handler = self._recv_pkthdr
-
             if self._recv_seq == 0xffffffff and not self._recv_encryption:
                 raise ProtocolError('Sequence rollover before kex complete')
 
@@ -1625,7 +1642,10 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             else:
                 self._recv_seq = (seq + 1) & 0xffffffff
 
-        return True
+        self._recv_handler = self._recv_pkthdr
+
+        if is_async and self._inpbuf:
+            self._recv_data()
 
     def send_packet(self, pkttype: int, *args: bytes,
                     handler: Optional[SSHPacketLogger] = None) -> None:
@@ -2218,8 +2238,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._server_sig_algs = \
                 set(extensions.get(b'server-sig-algs', b'').split(b','))
 
-    def _process_kexinit(self, _pkttype: int, _pktid: int,
-                         packet: SSHPacket) -> None:
+    async def _process_kexinit(self, _pkttype: int, _pktid: int,
+                               packet: SSHPacket) -> None:
         """Process a key exchange request"""
 
         if self._kex:
@@ -2323,7 +2343,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self.logger.debug1('Beginning key exchange')
         self.logger.debug2('  Key exchange alg: %s', self._kex.algorithm)
 
-        self._kex.start()
+        await self._kex.start()
 
     def _process_newkeys(self, _pkttype: int, _pktid: int,
                          packet: SSHPacket) -> None:
@@ -3493,20 +3513,23 @@ class SSHClientConnection(SSHConnection):
 
         return [method.decode('ascii') for method in self._auth_methods]
 
-    def try_next_auth(self) -> None:
+    def try_next_auth(self, *, next_method: bool = False) -> None:
         """Attempt client authentication using the next compatible method"""
 
         if self._auth:
             self._auth.cancel()
             self._auth = None
 
-        while self._auth_methods:
-            method = self._auth_methods.pop(0)
+        if next_method:
+            self._auth_methods.pop(0)
 
-            self._auth = lookup_client_auth(self, method)
+        while self._auth_methods:
+            self._auth = lookup_client_auth(self, self._auth_methods[0])
 
             if self._auth:
                 return
+
+            self._auth_methods.pop(0)
 
         self.logger.info('Auth failed for user %s', self._username)
 
@@ -3565,11 +3588,14 @@ class SSHClientConnection(SSHConnection):
         client_host = self._options.client_host
 
         if client_host is None:
-            sockname = self.get_extra_info('sockname')
+            sockname = cast(SockAddr, self.get_extra_info('sockname'))
 
             if sockname:
-                client_host, _ = await self._loop.getnameinfo(
-                    cast(SockAddr, sockname), socket.NI_NUMERICSERV)
+                try:
+                    client_host, _ = await self._loop.getnameinfo(
+                        sockname, socket.NI_NUMERICSERV)
+                except socket.gaierror:
+                    client_host = sockname[0]
             else:
                 client_host = ''
 
@@ -4047,8 +4073,8 @@ class SSHClientConnection(SSHConnection):
     async def create_session(self, session_factory: SSHClientSessionFactory,
                              command: DefTuple[Optional[str]] = (), *,
                              subsystem: DefTuple[Optional[str]]= (),
-                             env: DefTuple[_Env] = (),
-                             send_env: DefTuple[_SendEnv] = (),
+                             env: DefTuple[Env] = (),
+                             send_env: DefTuple[Optional[EnvSeq]] = (),
                              request_pty: DefTuple[Union[bool, str]] = (),
                              term_type: DefTuple[Optional[str]] = (),
                              term_size: DefTuple[TermSizeArg] = (),
@@ -4153,8 +4179,8 @@ class SSHClientConnection(SSHConnection):
            :type session_factory: `callable`
            :type command: `str`
            :type subsystem: `str`
-           :type env: `dict` with `str` keys and values
-           :type send_env: `list` of `str`
+           :type env: `dict` with `bytes` or `str` keys and values
+           :type send_env: `list` of `bytes` or `str`
            :type request_pty: `bool`, `'force'`, or `'auto'`
            :type term_type: `str`
            :type term_size: `tuple` of 2 or 4 `int` values
@@ -4222,22 +4248,13 @@ class SSHClientConnection(SSHConnection):
         if max_pktsize == ():
             max_pktsize = self._options.max_pktsize
 
-        new_env: Dict[str, str] = {}
+        new_env: Dict[bytes, bytes] = {}
 
         if send_env:
-            for key in send_env:
-                pattern = WildcardPattern(key)
-                new_env.update((key, value) for key, value in os.environ.items()
-                               if pattern.matches(key))
+            new_env.update(lookup_env(send_env))
 
         if env:
-            try:
-                if isinstance(env, list):
-                    new_env.update((item.split('=', 1) for item in env))
-                else:
-                    new_env.update(cast(Mapping[str, str], env))
-            except ValueError:
-                raise ValueError('Invalid environment value') from None
+            new_env.update(encode_env(env))
 
         if request_pty == 'force':
             request_pty = True
@@ -5575,8 +5592,8 @@ class SSHClientConnection(SSHConnection):
         return cast(SSHForwarder, peer)
 
     @async_context_manager
-    async def start_sftp_client(self, env: DefTuple[_Env] = (),
-                                send_env: DefTuple[_SendEnv] = (),
+    async def start_sftp_client(self, env: DefTuple[Env] = (),
+                                send_env: DefTuple[Optional[EnvSeq]] = (),
                                 path_encoding: Optional[str] = 'utf-8',
                                 path_errors = 'strict',
                                 sftp_version = MIN_SFTP_VERSION) -> SFTPClient:
@@ -5875,9 +5892,13 @@ class SSHServerConnection(SSHConnection):
         if self._trust_client_host:
             resolved_host = client_host
         else:
-            resolved_host, _ = await self._loop.getnameinfo(
-                cast(SockAddr, self.get_extra_info('peername')),
-                socket.NI_NUMERICSERV)
+            peername = cast(SockAddr, self.get_extra_info('peername'))
+
+            try:
+                resolved_host, _ = await self._loop.getnameinfo(
+                    peername, socket.NI_NUMERICSERV)
+            except socket.gaierror:
+                resolved_host = peername[0]
 
             if resolved_host != client_host:
                 self.logger.info('Client host mismatch: received %s, '
@@ -5931,11 +5952,10 @@ class SSHServerConnection(SSHConnection):
 
         self._key_options = options
 
-        if self.get_key_option('principals'):
-            username = ''
+        cert_user = None if self.get_key_option('principals') else username
 
         try:
-            cert.validate(CERT_TYPE_USER, username)
+            cert.validate(CERT_TYPE_USER, cert_user)
         except ValueError:
             return None
 
@@ -6233,8 +6253,8 @@ class SSHServerConnection(SSHConnection):
            (dest_host, dest_port) not in permitted_opens and \
            (dest_host, None) not in permitted_opens:
             raise ChannelOpenError(OPEN_ADMINISTRATIVELY_PROHIBITED,
-                                   'Port forwarding not permitted to %s '
-                                   'port %s' % (dest_host, dest_port))
+                                   'Port forwarding not permitted to '
+                                   f'{dest_host} port {dest_port}')
 
         result = self._owner.connection_requested(dest_host, dest_port,
                                                   orig_host, orig_port)
@@ -7525,16 +7545,17 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :param compression_algs: (optional)
            A list of compression algorithms to use during the SSH handshake,
            taken from :ref:`compression algorithms <CompressionAlgs>`, or
-           `None` to disable compression.
+           `None` to disable compression. The client prefers to disable
+           compression, but will enable it if the server requires it.
        :param signature_algs: (optional)
            A list of public key signature algorithms to use during the SSH
            handshake, taken from :ref:`signature algorithms <SignatureAlgs>`.
        :param rekey_bytes: (optional)
            The number of bytes which can be sent before the SSH session
-           key is renegotiated. This defaults to 1 GB.
+           key is renegotiated, defaulting to 1 GB.
        :param rekey_seconds: (optional)
            The maximum time in seconds before the SSH session key is
-           renegotiated. This defaults to 1 hour.
+           renegotiated, defaulting to 1 hour.
        :param connect_timeout: (optional)
            The maximum time in seconds allowed to complete an outbound
            SSH connection. This includes the time to establish the TCP
@@ -7752,8 +7773,8 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
     pkcs11_pin: Optional[str]
     command: Optional[str]
     subsystem: Optional[str]
-    env: _Env
-    send_env: _SendEnv
+    env: Env
+    send_env: Optional[EnvSeq]
     request_pty: _RequestPTY
     term_type: Optional[str]
     term_size: TermSizeArg
@@ -7819,8 +7840,8 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
                 pkcs11_provider: DefTuple[Optional[str]] = (),
                 pkcs11_pin: Optional[str] = None,
                 command: DefTuple[Optional[str]] = (),
-                subsystem: Optional[str] = None, env: DefTuple[_Env] = (),
-                send_env: DefTuple[_SendEnv] = (),
+                subsystem: Optional[str] = None, env: DefTuple[Env] = (),
+                send_env: DefTuple[Optional[EnvSeq]] = (),
                 request_pty: DefTuple[_RequestPTY] = (),
                 term_type: Optional[str] = None,
                 term_size: TermSizeArg = None,
@@ -7891,9 +7912,17 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
                         rekey_seconds, connect_timeout, login_timeout,
                         keepalive_interval, keepalive_count_max)
 
-        self.known_hosts = known_hosts if known_hosts != () else \
-            (cast(List[str], config.get('UserKnownHostsFile', [])) +
-             cast(List[str], config.get('GlobalKnownHostsFile', []))) or ()
+        if known_hosts != ():
+            self.known_hosts = known_hosts
+        else:
+            user_known_hosts = \
+                cast(List[str], config.get('UserKnownHostsFile', ()))
+
+            if user_known_hosts == []:
+                self.known_hosts = None
+            else:
+                self.known_hosts = list(user_known_hosts) + \
+                    cast(List[str], config.get('GlobalKnownHostsFile', []))
 
         self.host_key_alias = \
             cast(Optional[str], host_key_alias if host_key_alias != () else
@@ -8039,9 +8068,9 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
 
         self.subsystem = subsystem
 
-        self.env = cast(_Env, env if env != () else config.get('SetEnv'))
+        self.env = cast(Env, env if env != () else config.get('SetEnv'))
 
-        self.send_env = cast(_SendEnv, send_env if send_env != () else
+        self.send_env = cast(Optional[EnvSeq], send_env if send_env != () else
             config.get('SendEnv'))
 
         self.request_pty = cast(_RequestPTY, request_pty if request_pty != ()
@@ -8270,26 +8299,28 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
            this server, defaulting to `'AsyncSSH'` and its version number.
        :param kex_algs: (optional)
            A list of allowed key exchange algorithms in the SSH handshake,
-           taken from :ref:`key exchange algorithms <KexAlgs>`
+           taken from :ref:`key exchange algorithms <KexAlgs>`,
        :param encryption_algs: (optional)
            A list of encryption algorithms to use during the SSH handshake,
-           taken from :ref:`encryption algorithms <EncryptionAlgs>`
+           taken from :ref:`encryption algorithms <EncryptionAlgs>`.
        :param mac_algs: (optional)
            A list of MAC algorithms to use during the SSH handshake, taken
-           from :ref:`MAC algorithms <MACAlgs>`
+           from :ref:`MAC algorithms <MACAlgs>`.
        :param compression_algs: (optional)
            A list of compression algorithms to use during the SSH handshake,
            taken from :ref:`compression algorithms <CompressionAlgs>`, or
-           `None` to disable compression
+           `None` to disable compression. The server defaults to allowing
+           either no compression or compression after auth, depending on
+           what the client requests.
        :param signature_algs: (optional)
            A list of public key signature algorithms to use during the SSH
-           handshake, taken from :ref:`signature algorithms <SignatureAlgs>`
+           handshake, taken from :ref:`signature algorithms <SignatureAlgs>`.
        :param rekey_bytes: (optional)
            The number of bytes which can be sent before the SSH session
-           key is renegotiated, defaulting to 1 GB
+           key is renegotiated, defaulting to 1 GB.
        :param rekey_seconds: (optional)
            The maximum time in seconds before the SSH session key is
-           renegotiated, defaulting to 1 hour
+           renegotiated, defaulting to 1 hour.
        :param connect_timeout: (optional)
            The maximum time in seconds allowed to complete an outbound
            SSH connection. This includes the time to establish the TCP
@@ -8299,8 +8330,8 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
            and AsyncSSH's login timeout.
        :param login_timeout: (optional)
            The maximum time in seconds allowed for authentication to
-           complete, defaulting to 2 minutes. Setting this to 0
-           will disable the login timeout.
+           complete, defaulting to 2 minutes. Setting this to 0 will
+           disable the login timeout.
 
                .. note:: This timeout only applies after the SSH TCP
                          connection is established. To set a timeout

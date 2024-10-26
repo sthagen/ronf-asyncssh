@@ -1,4 +1,4 @@
-# Copyright (c) 2015-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2015-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -61,8 +61,7 @@ class _ECKey(CryptoKey):
         try:
             return _curves[curve_id]
         except KeyError: # pragma: no cover, other curves not registered
-            raise ValueError('Unknown EC curve %s' %
-                             curve_id.decode()) from None
+            raise ValueError(f'Unknown EC curve {curve_id.decode()}') from None
 
     @property
     def curve_id(self) -> bytes:
@@ -181,8 +180,7 @@ class ECDH:
         try:
             curve = _curves[curve_id]
         except KeyError: # pragma: no cover, other curves not registered
-            raise ValueError('Unknown EC curve %s' %
-                             curve_id.decode()) from None
+            raise ValueError(f'Unknown EC curve {curve_id.decode()}') from None
 
         self._priv_key = ec.generate_private_key(curve())
 
@@ -194,12 +192,15 @@ class ECDH:
         return pub_key.public_bytes(Encoding.X962,
                                     PublicFormat.UncompressedPoint)
 
-    def get_shared(self, peer_public: bytes) -> int:
-        """Return the shared key from the peer's public key"""
+    def get_shared_bytes(self, peer_public: bytes) -> bytes:
+        """Return the shared key from the peer's public key as bytes"""
 
         peer_key = ec.EllipticCurvePublicKey.from_encoded_point(
             self._priv_key.curve, peer_public)
 
-        shared_key = self._priv_key.exchange(ec.ECDH(), peer_key)
+        return self._priv_key.exchange(ec.ECDH(), peer_key)
 
-        return int.from_bytes(shared_key, 'big')
+    def get_shared(self, peer_public: bytes) -> int:
+        """Return the shared key from the peer's public key"""
+
+        return int.from_bytes(self.get_shared_bytes(peer_public), 'big')

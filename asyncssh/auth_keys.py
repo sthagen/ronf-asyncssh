@@ -1,4 +1,4 @@
-# Copyright (c) 2015-2021 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2015-2024 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -120,8 +120,8 @@ class _SSHAuthorizedKeyEntry:
                 host = host[1:-1]
 
             port = None if port_str == '*' else int(port_str)
-        except:
-            raise ValueError('Illegal permitopen value: %s' % value) from None
+        except ValueError:
+            raise ValueError(f'Illegal permitopen value: {value}') from None
 
         permitted_opens = cast(Set[Tuple[str, Optional[int]]],
                                self.options.setdefault(option, set()))

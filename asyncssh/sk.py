@@ -147,6 +147,11 @@ def _ctap2_sign(dev: 'CtapHidDevice', message_hash: bytes,
     allow_creds = [{'type': 'public-key', 'id': key_handle}]
     options = {'up': touch_required}
 
+    # See if key handle exists before requiring touch
+    if touch_required:
+        ctap2.get_assertions(application, message_hash, allow_creds,
+                             options={'up': False})
+
     assertion = ctap2.get_assertions(application, message_hash, allow_creds,
                                      options=options)[0]
 
@@ -173,7 +178,7 @@ def sk_enroll(alg: int, application: bytes, user: str,
             raise ValueError('Invalid PIN') from None
         else:
             raise ValueError(str(exc)) from None
-    except ValueError as exc:
+    except ValueError:
         try:
             return _ctap1_enroll(dev, alg, application)
         except ApduError as exc:

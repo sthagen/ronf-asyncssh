@@ -1074,6 +1074,7 @@ SFTP Support
    ======================================================================= =
    .. autoattribute:: logger
    .. autoattribute:: version
+   .. autoattribute:: limits
    ======================================================================= =
 
    ===================== =
@@ -1242,6 +1243,8 @@ SFTP Support
 .. autoclass:: SFTPVFSAttrs()
 
 .. autoclass:: SFTPName()
+
+.. autoclass:: SFTPLimits()
 
 .. index:: Public key and certificate support
 .. _PublicKeySupport:
@@ -1999,7 +2002,7 @@ by AsyncSSH:
   | gss-curve25519-sha256
   | gss-curve448-sha512
   | gss-nistp521-sha512
-  | gss-nistp384-sha256
+  | gss-nistp384-sha384
   | gss-nistp256-sha256
   | gss-1.3.132.0.10-sha256
   | gss-gex-sha256
@@ -2009,6 +2012,10 @@ by AsyncSSH:
   | gss-group17-sha512
   | gss-group18-sha512
   | gss-group14-sha1
+  | mlkem768x25519-sha256
+  | mlkem768nistp256-sha256
+  | mlkem1024nistp384-sha384
+  | sntrup761x25519-sha512
   | sntrup761x25519-sha512\@openssh.com
   | curve25519-sha256
   | curve25519-sha256\@libssh.org
