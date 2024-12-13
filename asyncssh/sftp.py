@@ -137,6 +137,8 @@ _SFTPPaths = Union[_SFTPPath, Sequence[_SFTPPath]]
 _SFTPPatList = List[Union[bytes, List[bytes]]]
 _SFTPStatFunc = Callable[[_SFTPPath], Awaitable['SFTPAttrs']]
 
+_SFTPClientFileOrPath = Union['SFTPClientFile', _SFTPPath]
+
 _SFTPNames = Tuple[Sequence['SFTPName'], bool]
 _SFTPOSAttrs = Union[os.stat_result, 'SFTPAttrs']
 _SFTPOSVFSAttrs = Union[os.statvfs_result, 'SFTPVFSAttrs']
@@ -160,6 +162,8 @@ SAFE_SFTP_WRITE_LEN = 16*1024                       # 16 KiB
 MAX_SFTP_READ_LEN = 4*1024*1024                     # 4 MiB
 MAX_SFTP_WRITE_LEN = 4*1024*1024                    # 4 MiB
 MAX_SFTP_PACKET_LEN = MAX_SFTP_WRITE_LEN + 1024
+
+_COPY_DATA_BLOCK_SIZE = 256*1024                    # 256 KiB
 
 _MAX_SFTP_REQUESTS = 128
 _MAX_READDIR_NAMES = 128
@@ -272,7 +276,8 @@ class _SFTPFSProtocol(Protocol):
         """Create a symbolic link"""
 
     @async_context_manager
-    async def open(self, path: bytes, mode: str) -> SFTPFileProtocol:
+    async def open(self, path: bytes, mode: str,
+                   block_size: int = -1) -> SFTPFileProtocol:
         """Open a file"""
 
 
@@ -797,30 +802,43 @@ class _SFTPFileCopier(_SFTPParallelIO[int]):
         """Perform parallel file copy"""
 
         try:
-            self._src = await self._srcfs.open(self._srcpath, 'rb')
-            self._dst = await self._dstfs.open(self._dstpath, 'wb')
+            self._src = await self._srcfs.open(self._srcpath, 'rb',
+                                               block_size=0)
+            self._dst = await self._dstfs.open(self._dstpath, 'wb',
+                                               block_size=0)
 
             if self._progress_handler and self._total_bytes == 0:
                 self._progress_handler(self._srcpath, self._dstpath, 0, 0)
 
-            async for _, datalen in self.iter():
-                if datalen:
-                    self._bytes_copied += datalen
+            if self._srcfs == self._dstfs and \
+                    isinstance(self._srcfs, SFTPClient) and \
+                    self._srcfs.supports_remote_copy:
+                await self._srcfs.remote_copy(cast(SFTPClientFile, self._src),
+                                              cast(SFTPClientFile, self._dst))
 
-                    if self._progress_handler:
-                        self._progress_handler(self._srcpath, self._dstpath,
-                                               self._bytes_copied,
-                                               self._total_bytes)
+                self._bytes_copied = self._total_bytes
 
-            if self._bytes_copied != self._total_bytes:
-                exc = SFTPFailure('Unexpected EOF during file copy')
+                if self._progress_handler:
+                    self._progress_handler(self._srcpath, self._dstpath,
+                                           self._bytes_copied,
+                                           self._total_bytes)
+            else:
+                async for _, datalen in self.iter():
+                    if datalen:
+                        self._bytes_copied += datalen
 
-                setattr(exc, 'filename', self._srcpath)
-                setattr(exc, 'offset', self._bytes_copied)
+                        if self._progress_handler:
+                            self._progress_handler(self._srcpath, self._dstpath,
+                                                   self._bytes_copied,
+                                                   self._total_bytes)
 
-                raise exc
+                if self._bytes_copied != self._total_bytes:
+                    exc = SFTPFailure('Unexpected EOF during file copy')
 
+                    setattr(exc, 'filename', self._srcpath)
+                    setattr(exc, 'offset', self._bytes_copied)
 
+                    raise exc
         finally:
             if self._src: # pragma: no branch
                 await self._src.close()
@@ -2469,12 +2487,19 @@ class SFTPClientHandler(SFTPHandler):
         self._supports_fsync = False
         self._supports_lsetstat = False
         self._supports_limits = False
+        self._supports_copy_data = False
 
     @property
     def version(self) -> int:
         """SFTP version associated with this SFTP session"""
 
         return self._version
+
+    @property
+    def supports_copy_data(self) -> bool:
+        """Return whether or not SFTP remote copy is supported"""
+
+        return self._supports_copy_data
 
     async def _cleanup(self, exc: Optional[Exception]) -> None:
         """Clean up this SFTP client session"""
@@ -2689,6 +2714,8 @@ class SFTPClientHandler(SFTPHandler):
                 self._supports_lsetstat = True
             elif name == b'limits@openssh.com' and data == b'1':
                 self._supports_limits = True
+            elif name == b'copy-data' and data == b'1':
+                self._supports_copy_data = True
 
         if version == 3:
             # Check if the server has a buggy SYMLINK implementation
@@ -3087,6 +3114,26 @@ class SFTPClientHandler(SFTPHandler):
         else:
             raise SFTPOpUnsupported('fsync not supported')
 
+    async def copy_data(self, read_from_handle: bytes, read_from_offset: int,
+                        read_from_length: int, write_to_handle: bytes,
+                        write_to_offset: int) -> None:
+        """Make an SFTP copy data request"""
+
+        if self._supports_copy_data:
+            self.logger.debug1('Sending copy-data from handle %s, '
+                               'offset %d, length %d to handle %s, '
+                               'offset %d', read_from_handle.hex(),
+                               read_from_offset, read_from_length,
+                               write_to_handle.hex(), write_to_offset)
+
+            await self._make_request(b'copy-data', String(read_from_handle),
+                                     UInt64(read_from_offset),
+                                     UInt64(read_from_length),
+                                     String(write_to_handle),
+                                     UInt64(write_to_offset))
+        else:
+            raise SFTPOpUnsupported('copy-data not supported')
+
     def exit(self) -> None:
         """Handle a request to close the SFTP session"""
 
@@ -3138,6 +3185,15 @@ class SFTPClientFile:
 
         await self.close()
         return False
+
+    @property
+    def handle(self) -> bytes:
+        """Return handle or raise an error if clsoed"""
+
+        if self._handle is None:
+            raise ValueError('I/O operation on closed file')
+
+        return self._handle
 
     async def _end(self) -> int:
         """Return the offset of the end of the file"""
@@ -3623,6 +3679,12 @@ class SFTPClient:
 
         return self._handler.limits
 
+    @property
+    def supports_remote_copy(self) -> bool:
+        """Return whether or not SFTP remote copy is supported"""
+
+        return self._handler.supports_copy_data
+
     @staticmethod
     def basename(path: bytes) -> bytes:
         """Return the final component of a POSIX-style path"""
@@ -3697,7 +3759,8 @@ class SFTPClient:
                     preserve: bool, recurse: bool, follow_symlinks: bool,
                     block_size: int, max_requests: int,
                     progress_handler: SFTPProgressHandler,
-                    error_handler: SFTPErrorHandler) -> None:
+                    error_handler: SFTPErrorHandler,
+                    remote_only: bool) -> None:
         """Copy a file, directory, or symbolic link"""
 
         try:
@@ -3733,7 +3796,8 @@ class SFTPClient:
                     await self._copy(srcfs, dstfs, srcfile, dstfile,
                                      srcname.attrs, preserve, recurse,
                                      follow_symlinks, block_size, max_requests,
-                                     progress_handler, error_handler)
+                                     progress_handler, error_handler,
+                                     remote_only)
 
                 self.logger.info('  Finished copy of directory %s to %s',
                                  srcpath, dstpath)
@@ -3747,6 +3811,9 @@ class SFTPClient:
                 await dstfs.symlink(targetpath, dstpath)
             else:
                 self.logger.info('  Copying file %s to %s', srcpath, dstpath)
+
+                if remote_only and not self.supports_remote_copy:
+                    raise SFTPOpUnsupported('Remote copy not supported')
 
                 await _SFTPFileCopier(block_size, max_requests, 0,
                                       srcattrs.size or 0, srcfs, dstfs,
@@ -3784,10 +3851,11 @@ class SFTPClient:
                           recurse: bool, follow_symlinks: bool,
                           block_size: int, max_requests: int,
                           progress_handler: SFTPProgressHandler,
-                          error_handler: SFTPErrorHandler) -> None:
+                          error_handler: SFTPErrorHandler,
+                          remote_only: bool = False) -> None:
         """Begin a new file upload, download, or copy"""
 
-        if block_size == -1:
+        if block_size <= 0:
             block_size = min(srcfs.limits.max_read_len,
                              dstfs.limits.max_write_len)
 
@@ -3841,7 +3909,8 @@ class SFTPClient:
 
             await self._copy(srcfs, dstfs, srcfile, dstfile, srcname.attrs,
                              preserve, recurse, follow_symlinks, block_size,
-                             max_requests, progress_handler, error_handler)
+                             max_requests, progress_handler, error_handler,
+                             remote_only)
 
     async def get(self, remotepaths: _SFTPPaths,
                   localpath: Optional[_SFTPPath] = None, *,
@@ -3989,7 +4058,7 @@ class SFTPClient:
            watch out for links that result in loops.
 
            The block_size argument specifies the size of read and write
-           requests issued when downloading the files, defaulting to
+           requests issued when uploading the files, defaulting to
            the maximum allowed by the server, or 16 KB if the server
            doesn't advertise limits.
 
@@ -4061,7 +4130,8 @@ class SFTPClient:
                    follow_symlinks: bool = False, block_size: int = -1,
                    max_requests: int = _MAX_SFTP_REQUESTS,
                    progress_handler: SFTPProgressHandler = None,
-                   error_handler: SFTPErrorHandler = None) -> None:
+                   error_handler: SFTPErrorHandler = None,
+                   remote_only: bool = False) -> None:
         """Copy remote files to a new location
 
            This method copies one or more files or directories on the
@@ -4095,8 +4165,8 @@ class SFTPClient:
            watch out for links that result in loops.
 
            The block_size argument specifies the size of read and write
-           requests issued when downloading the files, defaulting to
-           the maximum allowed by the server, or 16 KB if the server
+           requests issued when copying the files, defaulting to the
+           maximum allowed by the server, or 16 KB if the server
            doesn't advertise limits.
 
            The max_requests argument specifies the maximum number of
@@ -4138,6 +4208,8 @@ class SFTPClient:
                The function to call to report copy progress
            :param error_handler: (optional)
                The function to call when an error occurs
+           :param remote_only: (optional)
+               Whether or not to only allow this to be a remote copy
            :type srcpaths:
                :class:`PurePath <pathlib.PurePath>`, `str`, or `bytes`,
                or a sequence of these
@@ -4150,6 +4222,7 @@ class SFTPClient:
            :type max_requests: `int`
            :type progress_handler: `callable`
            :type error_handler: `callable`
+           :type remote_only: `bool`
 
            :raises: | :exc:`OSError` if a local file I/O error occurs
                     | :exc:`SFTPError` if the server returns an error
@@ -4159,7 +4232,7 @@ class SFTPClient:
         await self._begin_copy(self, self, srcpaths, dstpath, 'remote copy',
                                False, preserve, recurse, follow_symlinks,
                                block_size, max_requests, progress_handler,
-                               error_handler)
+                               error_handler, remote_only)
 
     async def mget(self, remotepaths: _SFTPPaths,
                    localpath: Optional[_SFTPPath] = None, *,
@@ -4213,8 +4286,9 @@ class SFTPClient:
                     follow_symlinks: bool = False, block_size: int = -1,
                     max_requests: int = _MAX_SFTP_REQUESTS,
                     progress_handler: SFTPProgressHandler = None,
-                    error_handler: SFTPErrorHandler = None) -> None:
-        """Download remote files with glob pattern match
+                    error_handler: SFTPErrorHandler = None,
+                    remote_only: bool = False) -> None:
+        """Copy remote files with glob pattern match
 
            This method copies files and directories on the remote
            system matching one or more glob patterns.
@@ -4228,7 +4302,46 @@ class SFTPClient:
         await self._begin_copy(self, self, srcpaths, dstpath, 'remote mcopy',
                                True, preserve, recurse, follow_symlinks,
                                block_size, max_requests, progress_handler,
-                               error_handler)
+                               error_handler, remote_only)
+
+    async def remote_copy(self, src: _SFTPClientFileOrPath,
+                          dst: _SFTPClientFileOrPath, src_offset: int = 0,
+                          src_length: int = 0, dst_offset: int = 0) -> None:
+        """Copy data between remote files
+
+           :param src:
+               The remote file object to read data from
+           :param dst:
+               The remote file object to write data to
+           :param src_offset: (optional)
+               The offset to begin reading data from
+           :param src_length: (optional)
+               The number of bytes to attempt to copy
+           :param dst_offset: (optional)
+               The offset to begin writing data to
+           :type src:
+               :class:`SFTPClientFile`, :class:`PurePath <pathlib.PurePath>`,
+               `str`, or `bytes`
+           :type dst:
+               :class:`SFTPClientFile`, :class:`PurePath <pathlib.PurePath>`,
+               `str`, or `bytes`
+           :type src_offset: `int`
+           :type src_length: `int`
+           :type dst_offset: `int`
+
+           :raises: :exc:`SFTPError` if the server doesn't support this
+                    extension or returns an error
+
+        """
+
+        if isinstance(src, (bytes, str, PurePath)):
+            src = await self.open(src, 'rb', block_size=0)
+
+        if isinstance(dst, (bytes, str, PurePath)):
+            dst = await self.open(dst, 'wb', block_size=0)
+
+        await self._handler.copy_data(src.handle, src_offset, src_length,
+                                      dst.handle, dst_offset)
 
     async def glob(self, patterns: _SFTPPaths,
                    error_handler: SFTPErrorHandler = None) -> \
@@ -4337,6 +4450,8 @@ class SFTPClient:
         exists = True
         parts = path.split(b'/')
         last = len(parts) - 1
+
+        exc: Type[SFTPError]
 
         for i, part in enumerate(parts):
             curpath = posixpath.join(curpath, part)
@@ -5578,7 +5693,8 @@ class SFTPServerHandler(SFTPHandler):
         (b'hardlink@openssh.com', b'1'),
         (b'fsync@openssh.com', b'1'),
         (b'lsetstat@openssh.com', b'1'),
-        (b'limits@openssh.com', b'1')]
+        (b'limits@openssh.com', b'1'),
+        (b'copy-data', b'1')]
 
     _attrib_extensions: List[bytes] = []
 
@@ -6423,7 +6539,7 @@ class SFTPServerHandler(SFTPHandler):
             await result
 
     async def _process_limits(self, packet: SSHPacket) -> SFTPLimits:
-        """Process an incoming SFTP fstatvfs request"""
+        """Process an incoming SFTP limits request"""
 
         packet.check_end()
 
@@ -6431,6 +6547,55 @@ class SFTPServerHandler(SFTPHandler):
 
         return SFTPLimits(MAX_SFTP_PACKET_LEN, MAX_SFTP_READ_LEN,
                           MAX_SFTP_WRITE_LEN, nfiles)
+
+    async def _process_copy_data(self, packet: SSHPacket) -> None:
+        """Process an incoming copy data request"""
+
+        read_from_handle = packet.get_string()
+        read_from_offset = packet.get_uint64()
+        read_from_length = packet.get_uint64()
+        write_to_handle = packet.get_string()
+        write_to_offset = packet.get_uint64()
+        packet.check_end()
+
+        self.logger.debug1('Received copy-data from handle %s, '
+                           'offset %d, length %d to handle %s, '
+                           'offset %d', read_from_handle.hex(),
+                           read_from_offset, read_from_length,
+                           write_to_handle.hex(), write_to_offset)
+
+        src = self._file_handles.get(read_from_handle)
+        dst = self._file_handles.get(write_to_handle)
+
+        if src and dst:
+            read_to_end = read_from_length == 0
+
+            while read_to_end or read_from_length:
+                if read_to_end:
+                    size = _COPY_DATA_BLOCK_SIZE
+                else:
+                    size = min(read_from_length, _COPY_DATA_BLOCK_SIZE)
+
+                data = self._server.read(src, read_from_offset, size)
+
+                if inspect.isawaitable(data):
+                    data = await cast(Awaitable[bytes], data)
+
+                result = self._server.write(dst, write_to_offset, data)
+
+                if inspect.isawaitable(result):
+                    await result
+
+                if len(data) < size:
+                    break
+
+                read_from_offset += size
+                write_to_offset += size
+
+                if not read_to_end:
+                    read_from_length -= size
+        else:
+            raise SFTPInvalidHandle('Invalid file handle')
 
     _packet_handlers: Dict[Union[int, bytes], _SFTPPacketHandler] = {
         FXP_OPEN:                     _process_open,
@@ -6460,7 +6625,8 @@ class SFTPServerHandler(SFTPHandler):
         b'hardlink@openssh.com':      _process_openssh_link,
         b'fsync@openssh.com':         _process_fsync,
         b'lsetstat@openssh.com':      _process_lsetstat,
-        b'limits@openssh.com':        _process_limits
+        b'limits@openssh.com':        _process_limits,
+        b'copy-data':                 _process_copy_data
     }
 
     async def run(self) -> None:
@@ -7622,7 +7788,8 @@ class LocalFS:
         os.symlink(_to_local_path(oldpath), _to_local_path(newpath))
 
     @async_context_manager
-    async def open(self, path: bytes, mode: str) -> LocalFile:
+    async def open(self, path: bytes, mode: str,
+                   block_size: int = -1) -> LocalFile:
         """Open a local file"""
 
         # pylint: disable=unused-argument

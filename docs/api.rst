@@ -1069,24 +1069,26 @@ SFTP Support
 
 .. autoclass:: SFTPClient()
 
-   ======================================================================= =
+   ======================================= =
    SFTP client attributes
-   ======================================================================= =
+   ======================================= =
    .. autoattribute:: logger
    .. autoattribute:: version
    .. autoattribute:: limits
-   ======================================================================= =
+   .. autoattribute:: supports_remote_copy
+   ======================================= =
 
-   ===================== =
+   =========================== =
    File transfer methods
-   ===================== =
+   =========================== =
    .. automethod:: get
    .. automethod:: put
    .. automethod:: copy
    .. automethod:: mget
    .. automethod:: mput
    .. automethod:: mcopy
-   ===================== =
+   .. automethod:: remote_copy
+   =========================== =
 
    ============================================================================================================================================================================================================================== =
    File access methods
@@ -1600,6 +1602,11 @@ The following OpenSSH client config options are currently supported:
 
   | AddressFamily
   | BindAddress
+  | CanonicalDomains
+  | CanonicalizeFallbackLocal
+  | CanonicalizeHostname
+  | CanonicalizeMaxDots
+  | CanonicalizePermittedCNAMEs
   | CASignatureAlgorithms
   | CertificateFile
   | ChallengeResponseAuthentication
@@ -1642,7 +1649,9 @@ The following OpenSSH client config options are currently supported:
 For the "Match" conditional, the following criteria are currently supported:
 
   | All
+  | Canonical
   | Exec
+  | Final
   | Host
   | LocalUser
   | OriginalHost
@@ -1656,6 +1665,10 @@ For the "Match" conditional, the following criteria are currently supported:
                function should be used. This is taken care of automatically
                when options objects are created by AsyncSSH APIs such as
                :func:`connect` and :func:`listen`.
+
+Match criteria can be negated by prefixing the criteria name with '!'.
+This will negate the criteria and causing the match block to be evaluated
+only if the negated criteria all fail to match.
 
 The following client config token expansions are currently supported:
 
@@ -1697,6 +1710,11 @@ The following OpenSSH server config options are currently supported:
   | AuthorizedKeysFile
   | AllowAgentForwarding
   | BindAddress
+  | CanonicalDomains
+  | CanonicalizeFallbackLocal
+  | CanonicalizeHostname
+  | CanonicalizeMaxDots
+  | CanonicalizePermittedCNAMEs
   | CASignatureAlgorithms
   | ChallengeResponseAuthentication
   | Ciphers
@@ -1724,7 +1742,9 @@ The following OpenSSH server config options are currently supported:
 For the "Match" conditional, the following criteria are currently supported:
 
   | All
+  | Canonical
   | Exec
+  | Final
   | Address
   | Host
   | LocalAddress
@@ -1740,6 +1760,9 @@ For the "Match" conditional, the following criteria are currently supported:
                when options objects are created by AsyncSSH APIs such as
                :func:`connect` and :func:`listen`.
 
+Match criteria can be negated by prefixing the criteria name with '!'.
+This will negate the criteria and causing the match block to be evaluated
+only if the negated criteria all fail to match.
 The following server config token expansions are currently supported:
 
 .. table::
@@ -2171,6 +2194,7 @@ supported by AsyncSSH:
   | x509v3-ssh-rsa
   | sk-ssh-ed25519\@openssh.com
   | sk-ecdsa-sha2-nistp256\@openssh.com
+  | webauthn-sk-ecdsa-sha2-nistp256\@openssh.com
   | ssh-ed25519
   | ssh-ed448
   | ecdsa-sha2-nistp521
