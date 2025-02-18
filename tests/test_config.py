@@ -156,7 +156,7 @@ class _TestConfig(TempDirTestCase):
         with open('.ssh/include', 'w') as f:
             f.write('Port 2222')
 
-        for path in ('include', Path('.ssh/include').absolute().as_posix()):
+        for path in ('include', Path('.ssh/include').resolve().as_posix()):
             config = self._parse_config(f'Include {path}')
             self.assertEqual(config.get('Port'), 2222)
 
@@ -335,6 +335,18 @@ class _TestClientConfig(_TestConfig):
         config = self._parse_config('    RemoteCommand     foo  bar  baz')
         self.assertEqual(config.get('RemoteCommand'), 'foo  bar  baz')
 
+    def test_set_forward_agent(self):
+        """Test agent forwarding path config option"""
+
+        for value, result in (('yes', True), ('true', True),
+                              ('no', False), ('false', False),
+                              ('agent', 'agent'), ('%d/agent', './agent')):
+            config = self._parse_config(f'ForwardAgent {value}')
+            self.assertEqual(config.get('ForwardAgent'), result)
+
+        config = self._parse_config('ForwardAgent yes\nForwardAgent no')
+        self.assertEqual(config.get('ForwardAgent'), True)
+
     def test_set_request_tty(self):
         """Test pseudo-terminal request config option"""
 
@@ -490,7 +502,7 @@ class _TestClientConfig(_TestConfig):
         def mock_hasattr(obj, attr):
             if obj == os and attr == 'getuid':
                 return False
-            else:
+            else: # pragma: no cover
                 return orig_hasattr(obj, attr)
 
         with self.assertRaises(asyncssh.ConfigParseError):
@@ -502,11 +514,24 @@ class _TestClientConfig(_TestConfig):
 
         for desc, config_data in (
                 ('Bad token in hostname', 'Hostname %p'),
-                ('Invalid token', 'IdentityFile %x'),
-                ('Percent at end', 'IdentityFile %')):
+                ('Invalid token', 'IdentityFile %x')):
             with self.subTest(desc):
                 with self.assertRaises(asyncssh.ConfigParseError):
                     self._parse_config(config_data)
+
+    def test_env_expansion(self):
+        """Test environment variable expansion"""
+
+        config = self._parse_config('RemoteCommand ${HOME}/.ssh')
+
+        self.assertEqual(config.get('RemoteCommand'), './.ssh')
+
+    def test_invalid_env_expansion(self):
+        """Test invalid environment variable expansion"""
+
+        with self.assertRaises(asyncssh.ConfigParseError):
+            self._parse_config('RemoteCommand ${XXX}')
+
 
 class _TestServerConfig(_TestConfig):
     """Unit tests for server config objects"""

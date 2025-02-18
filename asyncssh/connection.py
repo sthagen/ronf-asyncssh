@@ -1741,7 +1741,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._send_kexinit()
             self._kexinit_sent = True
 
-        if (((pkttype in {MSG_SERVICE_REQUEST, MSG_SERVICE_ACCEPT} or
+        if (((pkttype in {MSG_DEBUG, MSG_SERVICE_REQUEST, MSG_SERVICE_ACCEPT} or
               pkttype > MSG_KEX_LAST) and not self._kex_complete) or
                 (pkttype == MSG_USERAUTH_BANNER and
                  not (self._auth_in_progress or self._auth_complete)) or
@@ -1751,7 +1751,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         # If we're encrypting and we have no data outstanding, insert an
         # ignore packet into the stream
-        if self._send_encryption and pkttype not in (MSG_IGNORE, MSG_EXT_INFO):
+        if self._send_encryption and pkttype > MSG_KEX_LAST:
             self.send_packet(MSG_IGNORE, String(b''))
 
         orig_payload = Byte(pkttype) + b''.join(args)
@@ -2291,6 +2291,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self.logger.info('Beginning auth for user %s', self._username)
 
             self._auth_in_progress = True
+
+            if self._owner: # pragma: no branch
+                self._owner.begin_auth(self._username)
 
             # This method is only in SSHClientConnection
             # pylint: disable=no-member
@@ -7640,8 +7643,11 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
            made available for use. This is the default.
        :param agent_forwarding: (optional)
            Whether or not to allow forwarding of ssh-agent requests from
-           processes running on the server. By default, ssh-agent forwarding
-           requests from the server are not allowed.
+           processes running on the server. This argument can also be set
+           to the path of a UNIX domain socket in cases where forwarded
+           agent requests should be sent to a different path than client
+           agent requests. By default, forwarding ssh-agent requests from
+           the server is not allowed.
        :param pkcs11_provider: (optional)
            The path of a shared library which should be used as a PKCS#11
            provider for accessing keys on PIV security tokens. By default,
@@ -7874,7 +7880,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :type agent_path: `str`
        :type agent_identities:
            *see* :ref:`SpecifyingPublicKeys` and :ref:`SpecifyingCertificates`
-       :type agent_forwarding: `bool`
+       :type agent_forwarding: `bool` or `str`
        :type pkcs11_provider: `str` or `None`
        :type pkcs11_pin: `str`
        :type client_version: `str`
@@ -8016,7 +8022,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
                 disable_trivial_auth: bool = False,
                 agent_path: DefTuple[Optional[str]] = (),
                 agent_identities: DefTuple[Optional[IdentityListArg]] = (),
-                agent_forwarding: DefTuple[bool] = (),
+                agent_forwarding: DefTuple[Union[bool, str]] = (),
                 pkcs11_provider: DefTuple[Optional[str]] = (),
                 pkcs11_pin: Optional[str] = None,
                 command: DefTuple[Optional[str]] = (),
@@ -8242,9 +8248,17 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
             self.pkcs11_pin = None
 
         if agent_forwarding == ():
-            agent_forwarding = cast(bool, config.get('ForwardAgent', False))
+            agent_forwarding = cast(Union[bool, str],
+                                    config.get('ForwardAgent', False))
 
-        self.agent_forward_path = agent_path if agent_forwarding else None
+        agent_forwarding: Union[bool, str]
+
+        if not agent_forwarding:
+            self.agent_forward_path = None
+        elif agent_forwarding is True:
+            self.agent_forward_path = agent_path
+        else:
+            self.agent_forward_path = agent_forwarding
 
         self.command = cast(Optional[str], command if command != () else
             config.get('RemoteCommand'))
