@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -62,7 +62,7 @@ SSHServerSessionFactory = Callable[['SSHReader', 'SSHWriter',
                                     'SSHWriter'], MaybeAwait[None]]
 _OptServerSessionFactory = Optional[SSHServerSessionFactory]
 
-SFTPServerFactory = Callable[['SSHChannel[bytes]'], SFTPServer]
+SFTPServerFactory = Callable[['SSHChannel[bytes]'], MaybeAwait[SFTPServer]]
 _OptSFTPServerFactory = Optional[SFTPServerFactory]
 
 
@@ -705,7 +705,7 @@ class SSHServerStreamSession(SSHStreamSession[AnyStr],
         self._sftp_version = sftp_version
         self._allow_scp = allow_scp and bool(sftp_factory)
 
-    def _init_sftp_server(self) -> SFTPServer:
+    def _init_sftp_server(self) -> MaybeAwait[SFTPServer]:
         """Initialize an SFTP server for this stream to use"""
 
         assert self._chan is not None
@@ -771,7 +771,6 @@ class SSHServerStreamSession(SSHStreamSession[AnyStr],
 
         if inspect.isawaitable(handler):
             assert self._conn is not None
-            assert handler is not None
             self._conn.create_task(handler, stdin.logger)
 
     def exception_received(self, exc: Exception) -> None:
@@ -824,7 +823,6 @@ class SSHSocketStreamSession(SSHStreamSession[AnyStr]):
 
             if inspect.isawaitable(handler):
                 assert self._conn is not None
-                assert handler is not None
                 self._conn.create_task(handler, reader.logger)
 
 

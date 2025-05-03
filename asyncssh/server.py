@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -31,26 +31,36 @@ from .stream import SSHSocketSessionFactory, SSHServerSessionFactory
 
 if TYPE_CHECKING:
     # pylint: disable=cyclic-import
-    from .connection import SSHServerConnection, SSHAcceptHandler
+    from .connection import SSHClientConnection, SSHServerConnection
+    from .connection import SSHAcceptHandler
     from .channel import SSHServerChannel, SSHTCPChannel, SSHUNIXChannel
     from .channel import SSHTunTapChannel
     from .session import SSHServerSession, SSHTCPSession, SSHUNIXSession
     from .session import SSHTunTapSession
 
 
-_NewSession = Union[bool, 'SSHServerSession', SSHServerSessionFactory,
-                    Tuple['SSHServerChannel', 'SSHServerSession'],
-                    Tuple['SSHServerChannel', SSHServerSessionFactory]]
-_NewTCPSession = Union[bool, 'SSHTCPSession', SSHSocketSessionFactory,
-                       Tuple['SSHTCPChannel', 'SSHTCPSession'],
-                       Tuple['SSHTCPChannel', SSHSocketSessionFactory]]
-_NewUNIXSession = Union[bool, 'SSHUNIXSession', SSHSocketSessionFactory,
-                        Tuple['SSHUNIXChannel', 'SSHUNIXSession'],
-                        Tuple['SSHUNIXChannel', SSHSocketSessionFactory]]
-_NewTunTapSession = Union[bool, 'SSHTunTapSession', SSHSocketSessionFactory,
-                          Tuple['SSHTunTapChannel', 'SSHTunTapSession'],
-                          Tuple['SSHTunTapChannel', SSHSocketSessionFactory]]
-_NewListener = Union[bool, 'SSHAcceptHandler', SSHListener]
+_NewSession = Union[
+    bool, 'SSHClientConnection',
+    MaybeAwait['SSHServerSession'], SSHServerSessionFactory,
+    Tuple['SSHServerChannel', MaybeAwait['SSHServerSession']],
+    Tuple['SSHServerChannel', SSHServerSessionFactory]]
+_NewTCPSession = Union[
+    bool, 'SSHClientConnection',
+    MaybeAwait['SSHTCPSession'], SSHSocketSessionFactory,
+    Tuple['SSHTCPChannel', MaybeAwait['SSHTCPSession']],
+    Tuple['SSHTCPChannel', SSHSocketSessionFactory]]
+_NewUNIXSession = Union[
+    bool, 'SSHClientConnection',
+    MaybeAwait['SSHUNIXSession'], SSHSocketSessionFactory,
+    Tuple['SSHUNIXChannel', MaybeAwait['SSHUNIXSession']],
+    Tuple['SSHUNIXChannel', SSHSocketSessionFactory]]
+_NewTunTapSession = Union[
+    bool, 'SSHClientConnection',
+    MaybeAwait['SSHTunTapSession'], SSHSocketSessionFactory,
+    Tuple['SSHTunTapChannel', MaybeAwait['SSHTunTapSession']],
+    Tuple['SSHTunTapChannel', SSHSocketSessionFactory]]
+_NewTCPListener = Union[bool, 'SSHAcceptHandler', MaybeAwait[SSHListener]]
+_NewUNIXListener = Union[bool, MaybeAwait[SSHListener]]
 
 
 class SSHServer:
@@ -157,7 +167,7 @@ class SSHServer:
 
         return True # pragma: no cover
 
-    def auth_completed(self) -> None:
+    def auth_completed(self) -> MaybeAwait[None]:
         """Authentication was completed successfully
 
            This method is called when authentication has completed
@@ -166,6 +176,9 @@ class SSHServer:
            the authorized keys list or certificate associated with the
            user before any sessions are opened or forwarding requests
            are handled.
+
+           If blocking operations need to be performed when authentication
+           completes, this method may be defined as a coroutine.
 
         """
 
@@ -742,6 +755,11 @@ class SSHServer:
            :exc:`ChannelOpenError` exception with the reason for
            the failure.
 
+           If the application wishes to tunnel the connection over
+           another SSH connection, this method should return an
+           :class:`SSHClientConnection` connected to the desired
+           tunnel host.
+
            If the application wishes to process the data on the
            connection itself, this method should return either an
            :class:`SSHTCPSession` object which can be used to process the
@@ -795,7 +813,7 @@ class SSHServer:
         return False # pragma: no cover
 
     def server_requested(self, listen_host: str,
-                         listen_port: int) -> MaybeAwait[_NewListener]:
+                         listen_port: int) -> MaybeAwait[_NewTCPListener]:
         """Handle a request to listen on a TCP/IP address and port
 
            This method is called when a client makes a request to
@@ -857,6 +875,11 @@ class SSHServer:
            :exc:`ChannelOpenError` exception with the reason for
            the failure.
 
+           If the application wishes to tunnel the connection over
+           another SSH connection, this method should return an
+           :class:`SSHClientConnection` connected to the desired
+           tunnel host.
+
            If the application wishes to process the data on the
            connection itself, this method should return either an
            :class:`SSHUNIXSession` object which can be used to process the
@@ -901,7 +924,7 @@ class SSHServer:
         return False # pragma: no cover
 
     def unix_server_requested(self, listen_path: str) -> \
-            MaybeAwait[_NewListener]:
+            MaybeAwait[_NewUNIXListener]:
         """Handle a request to listen on a UNIX domain socket
 
            This method is called when a client makes a request to
@@ -951,13 +974,18 @@ class SSHServer:
            by the server. Applications wishing to accept such tunnels must
            override this method.
 
-           To allow standard path forwarding of data on the connection to the
+           To allow standard forwarding of data on the connection to the
            requested TUN device, this method should return `True`.
 
            To reject this request, this method should return `False`
            to send back a "Connection refused" response or raise an
            :exc:`ChannelOpenError` exception with the reason for
            the failure.
+
+           If the application wishes to tunnel the data over another
+           SSH connection, this method should return an
+           :class:`SSHClientConnection` connected to the desired
+           tunnel host.
 
            If the application wishes to process the data on the
            connection itself, this method should return either an
@@ -1009,13 +1037,18 @@ class SSHServer:
            by the server. Applications wishing to accept such tunnels must
            override this method.
 
-           To allow standard path forwarding of data on the connection to the
-           requested TUN device, this method should return `True`.
+           To allow standard forwarding of data on the connection to the
+           requested TAP device, this method should return `True`.
 
            To reject this request, this method should return `False`
            to send back a "Connection refused" response or raise an
            :exc:`ChannelOpenError` exception with the reason for
            the failure.
+
+           If the application wishes to tunnel the data over another
+           SSH connection, this method should return an
+           :class:`SSHClientConnection` connected to the desired
+           tunnel host.
 
            If the application wishes to process the data on the
            connection itself, this method should return either an

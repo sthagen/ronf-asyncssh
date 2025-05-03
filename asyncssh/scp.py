@@ -1,4 +1,4 @@
-# Copyright (c) 2017-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2017-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -24,8 +24,9 @@
 
 import argparse
 import asyncio
-import posixpath
+import inspect
 from pathlib import PurePath
+import posixpath
 import shlex
 import string
 import sys
@@ -40,9 +41,8 @@ from .logging import SSHLogger
 from .misc import BytesOrStr, FilePath, HostPort, MaybeAwait
 from .misc import async_context_manager, plural
 from .sftp import SFTPAttrs, SFTPGlob, SFTPName, SFTPServer, SFTPServerFS
-from .sftp import SFTPFileProtocol, SFTPError, SFTPFailure, SFTPBadMessage
-from .sftp import SFTPConnectionLost, SFTPErrorHandler, SFTPProgressHandler
-from .sftp import local_fs
+from .sftp import SFTPError, SFTPFailure, SFTPBadMessage, SFTPConnectionLost
+from .sftp import SFTPErrorHandler, SFTPProgressHandler, local_fs
 
 
 if TYPE_CHECKING:
@@ -58,6 +58,27 @@ _SCPConnPath = Union[Tuple[_SCPConn, _SCPPath], _SCPConn, _SCPPath]
 
 
 _SCP_BLOCK_SIZE = 256*1024    # 256 KiB
+
+
+class _SCPFileProtocol(Protocol):
+    """Protocol for accessing a file during an SCP copy"""
+
+    async def __aenter__(self) -> Self:
+        """Allow _SCPFileProtocol to be used as an async context manager"""
+
+    async def __aexit__(self, _exc_type: Optional[Type[BaseException]],
+                        _exc_value: Optional[BaseException],
+                        _traceback: Optional[TracebackType]) -> bool:
+        """Wait for file close when used as an async context manager"""
+
+    async def read(self, size: int, offset: int) -> bytes:
+        """Read data from the local file"""
+
+    async def write(self, data: bytes, offset: int) -> int:
+        """Write data to the local file"""
+
+    async def close(self) -> None:
+        """Close the local file"""
 
 
 class _SCPFSProtocol(Protocol):
@@ -86,7 +107,7 @@ class _SCPFSProtocol(Protocol):
         """Create a directory"""
 
     @async_context_manager
-    async def open(self, path: bytes, mode: str) -> SFTPFileProtocol:
+    async def open(self, path: bytes, mode: str) -> _SCPFileProtocol:
         """Open a file"""
 
 
@@ -1066,22 +1087,46 @@ async def scp(srcpaths: Union[_SCPConnPath, Sequence[_SCPConnPath]],
             await dstconn.wait_closed()
 
 
-def run_scp_server(sftp_server: SFTPServer, command: str,
+async def _scp_handler(sftp_server: MaybeAwait[SFTPServer],
+                       args: _SCPArgs, reader: 'SSHReader[bytes]',
+                       writer: 'SSHWriter[bytes]') -> None:
+    """Run an SCP server to handle this request"""
+
+    if inspect.isawaitable(sftp_server):
+        sftp_server = await sftp_server
+
+    fs = SFTPServerFS(sftp_server)
+
+    handler: Union[_SCPSource, _SCPSink]
+
+    if args.source:
+        handler = _SCPSource(fs, reader, writer, args.preserve,
+                             args.recurse, error_handler=False, server=True)
+    else:
+        handler = _SCPSink(fs, reader, writer, args.must_be_dir,
+                           args.preserve, args.recurse,
+                           error_handler=False, server=True)
+
+    try:
+        await handler.run(args.path)
+    finally:
+        result = sftp_server.exit()
+
+        if inspect.isawaitable(result):
+            await result
+
+
+def run_scp_server(sftp_server: MaybeAwait[SFTPServer], command: str,
                    stdin: 'SSHReader[bytes]', stdout: 'SSHWriter[bytes]',
                    stderr: 'SSHWriter[bytes]') -> MaybeAwait[None]:
     """Return a handler for an SCP server session"""
 
-    async def _run_handler() -> None:
-        """Run an SCP server to handle this request"""
-
-        try:
-            await handler.run(args.path)
-        finally:
-            sftp_server.exit()
-
     try:
         args = _SCPArgParser().parse(command)
     except ValueError as exc:
+        if inspect.iscoroutine(sftp_server):
+            sftp_server.close()
+
         stdin.logger.info('Error starting SCP server: %s', str(exc))
         stderr.write(b'scp: ' + str(exc).encode('utf-8') + b'\n')
         cast('SSHServerChannel', stderr.channel).exit(1)
@@ -1089,15 +1134,4 @@ def run_scp_server(sftp_server: SFTPServer, command: str,
 
     stdin.logger.info('Starting SCP server, args: %s', command[4:].strip())
 
-    fs = SFTPServerFS(sftp_server)
-
-    handler: Union[_SCPSource, _SCPSink]
-
-    if args.source:
-        handler = _SCPSource(fs, stdin, stdout, args.preserve, args.recurse,
-                             error_handler=False, server=True)
-    else:
-        handler = _SCPSink(fs, stdin, stdout, args.must_be_dir, args.preserve,
-                           args.recurse, error_handler=False, server=True)
-
-    return _run_handler()
+    return _scp_handler(sftp_server, args, stdin, stdout)

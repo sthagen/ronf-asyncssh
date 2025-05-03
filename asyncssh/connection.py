@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -1075,7 +1075,13 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
             self._wait = None
 
         if self._owner: # pragma: no branch
-            self._owner.connection_lost(exc)
+            # pylint: disable=broad-except
+            try:
+                self._owner.connection_lost(exc)
+            except Exception:
+                self.logger.debug1('Uncaught exception in owner ignored',
+                                   exc_info=sys.exc_info)
+
             self._owner = None
 
         self._cancel_login_timer()
@@ -1196,7 +1202,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         return self._server
 
-    def is_closed(self):
+    def is_closed(self) -> bool:
         """Return whether the connection is closed"""
 
         return self._close_event.is_set()
@@ -2069,7 +2075,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self.send_packet(MSG_USERAUTH_FAILURE, NameList(methods),
                          Boolean(partial_success))
 
-    def send_userauth_success(self) -> None:
+    async def send_userauth_success(self) -> None:
         """Send a user authentication success response"""
 
         self.logger.info('Auth for user %s succeeded', self._username)
@@ -2086,13 +2092,15 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._set_keepalive_timer()
 
         if self._owner: # pragma: no branch
-            self._owner.auth_completed()
+            result = self._owner.auth_completed()
+
+            if inspect.isawaitable(result):
+                await result
 
         if self._acceptor:
             result = self._acceptor(self)
 
             if inspect.isawaitable(result):
-                assert result is not None
                 self.create_task(result)
 
             self._acceptor = None
@@ -2506,7 +2514,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 result = await cast(Awaitable[bool], result)
 
             if not result:
-                self.send_userauth_success()
+                await self.send_userauth_success()
                 return
 
         if not self._owner: # pragma: no cover
@@ -2603,7 +2611,6 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                 result = self._acceptor(self)
 
                 if inspect.isawaitable(result):
-                    assert result is not None
                     self.create_task(result)
 
                 self._acceptor = None
@@ -3229,9 +3236,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
                     raise ChannelOpenError(OPEN_ADMINISTRATIVELY_PROHIBITED,
                                            'Connection forwarding denied')
 
-            return (await self.create_connection(session_factory,
-                                                 dest_host, dest_port,
-                                                 orig_host, orig_port))
+            return await self.create_connection(session_factory, dest_host,
+                                                dest_port, orig_host, orig_port)
 
         if (listen_host, listen_port) == (dest_host, dest_port):
             self.logger.info('Creating local TCP forwarder on %s',
@@ -4130,7 +4136,6 @@ class SSHClientConnection(SSHConnection):
                                                 retained, revoked)
 
         if inspect.isawaitable(result):
-            assert result is not None
             await result
 
         self._report_global_response(True)
@@ -5052,8 +5057,8 @@ class SSHClientConnection(SSHConnection):
 
         """
 
-        return (await create_connection(client_factory, host, port,
-                                        tunnel=self, **kwargs)) # type: ignore
+        return await create_connection(client_factory, host, port,
+                                       tunnel=self, **kwargs) # type: ignore
 
     @async_context_manager
     async def connect_ssh(self, host: str, port: DefTuple[int] = (),
@@ -5321,8 +5326,7 @@ class SSHClientConnection(SSHConnection):
                     raise ChannelOpenError(OPEN_ADMINISTRATIVELY_PROHIBITED,
                                            'Connection forwarding denied')
 
-            return (await self.create_unix_connection(session_factory,
-                                                      dest_path))
+            return await self.create_unix_connection(session_factory, dest_path)
 
         self.logger.info('Creating local TCP forwarder from %s to %s',
                          (listen_host, listen_port), dest_path)
@@ -6301,6 +6305,9 @@ class SSHServerConnection(SSHConnection):
             if not result:
                 raise ChannelOpenError(OPEN_CONNECT_FAILED, 'Session refused')
 
+            if isinstance(result, SSHClientConnection):
+                result = self.forward_tunneled_session(result)
+
             if isinstance(result, tuple):
                 chan, result = result
             else:
@@ -6356,6 +6363,10 @@ class SSHServerConnection(SSHConnection):
         if result is True:
             result = cast(SSHTCPSession[bytes],
                           self.forward_connection(dest_host, dest_port))
+        elif isinstance(result, SSHClientConnection):
+            result = cast(Awaitable[SSHTCPSession[bytes]],
+                          self.forward_tunneled_connection(
+                              result, dest_host, dest_port))
 
         if isinstance(result, tuple):
             chan, result = result
@@ -6502,6 +6513,10 @@ class SSHServerConnection(SSHConnection):
         if result is True:
             result = cast(SSHUNIXSession[bytes],
                           self.forward_unix_connection(dest_path))
+        elif isinstance(result, SSHClientConnection):
+            result = cast(Awaitable[SSHUNIXSession[bytes]],
+                          self.forward_tunneled_unix_connection(
+                              result, dest_path))
 
         if isinstance(result, tuple):
             chan, result = result
@@ -6617,10 +6632,14 @@ class SSHServerConnection(SSHConnection):
             result = False
 
         if not result:
-            raise ChannelOpenError(OPEN_CONNECT_FAILED, 'Connection refused')
+            raise ChannelOpenError(OPEN_CONNECT_FAILED,
+                                   'TUN/TAP request refused')
 
         if result is True:
             result = cast(SSHTunTapSession, self.forward_tuntap(mode, unit))
+        elif isinstance(result, SSHClientConnection):
+            result = cast(Awaitable[SSHTunTapSession],
+                          self.forward_tunneled_tuntap(result, mode, unit))
 
         if isinstance(result, tuple):
             chan, result = result
@@ -7174,6 +7193,76 @@ class SSHServerConnection(SSHConnection):
         session: SSHUNIXStreamSession[bytes]
 
         return SSHReader[bytes](session, chan), SSHWriter[bytes](session, chan)
+
+    async def forward_tunneled_session(
+            self, conn: SSHClientConnection) -> SSHServerProcess:
+        """Forward a tunneled session between SSH connections"""
+
+        async def process_factory(process: SSHServerProcess) -> None:
+            """Return an upstream process used to forward the session"""
+
+            encoding, errors = process.channel.get_encoding()
+
+            upstream_process: SSHClientProcess = await conn.create_process(
+                command=process.command, subsystem=process.subsystem,
+                env=process.env, term_type=process.term_type,
+                term_size=process.term_size, term_modes=process.term_modes,
+                encoding=encoding, errors=errors, stdin=process.stdin,
+                stdout=process.stdout, stderr=process.stderr)
+
+            await upstream_process.wait_closed()
+
+        self.logger.info('  Forwarding session via SSH tunnel')
+
+        return SSHServerProcess(process_factory, None, MIN_SFTP_VERSION, False)
+
+    async def forward_tunneled_connection(
+            self, conn: SSHClientConnection,
+            dest_host: str, dest_port: int) -> SSHForwarder:
+        """Forward a tunneled TCP connection between SSH connections"""
+
+        _, peer = await conn.create_connection(
+            cast(SSHTCPSessionFactory[bytes], SSHForwarder),
+            dest_host, dest_port)
+
+        self.logger.info('  Forwarding TCP connection to %s via SSH tunnel',
+                         (dest_host, dest_port))
+
+        return SSHForwarder(cast(SSHForwarder, peer))
+
+    async def forward_tunneled_unix_connection(
+            self, conn: SSHClientConnection,
+            dest_path: str) -> SSHForwarder:
+        """Forward a tunneled UNIX connection between SSH connections"""
+
+        _, peer = await conn.create_unix_connection(
+            cast(SSHUNIXSessionFactory[bytes], SSHForwarder), dest_path)
+
+        self.logger.info('  Forwarding UNIX connection to %s via SSH tunnel',
+                         dest_path)
+
+        return SSHForwarder(cast(SSHForwarder, peer))
+
+    async def forward_tunneled_tuntap(
+            self, conn: SSHClientConnection,
+            mode: int, unit: Optional[int]) -> SSHForwarder:
+        """Forward a TUN/TAP connection between SSH connections"""
+
+        if mode == SSH_TUN_MODE_POINTTOPOINT:
+            create_func = conn.create_tun
+            layer = 3
+        else:
+            create_func = conn.create_tap
+            layer = 2
+
+        transport, peer = await create_func(
+            cast(SSHTunTapSessionFactory, SSHForwarder), unit)
+        interface = transport.get_extra_info('interface')
+
+        self.logger.info('  Forwarding layer %d traffic to %s via SSH tunnel',
+                         layer, interface)
+
+        return SSHForwarder(cast(SSHForwarder, peer))
 
 
 class SSHConnectionOptions(Options, Generic[_Options]):
@@ -8473,11 +8562,11 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
            errors of data exchanged on sessions on this server, defaulting
            to 'strict'.
        :param sftp_factory: (optional)
-           A `callable` which returns an :class:`SFTPServer` object that
-           will be created each time an SFTP session is requested by the
-           client, or `True` to use the base :class:`SFTPServer` class
-           to handle SFTP requests. If not specified, SFTP sessions are
-           rejected by default.
+           A `callable` or coroutine which returns an :class:`SFTPServer`
+           object that will be created each time an SFTP session is
+           requested by the client, or `True` to use the base
+           :class:`SFTPServer` class to handle SFTP requests. If not
+           specified, SFTP sessions are rejected by default.
        :param sftp_version: (optional)
            The maximum version of the SFTP protocol to support, currently
            either 3 or 4, defaulting to 3.
@@ -8624,7 +8713,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
        :type session_factory: `callable` or coroutine
        :type encoding: `str` or `None`
        :type errors: `str`
-       :type sftp_factory: `callable`
+       :type sftp_factory: `callable` or coroutine
        :type sftp_version: `int`
        :type allow_scp: `bool`
        :type window: `int`

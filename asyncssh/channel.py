@@ -26,6 +26,7 @@ import codecs
 import inspect
 import re
 import signal as _signal
+import sys
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, AnyStr, Awaitable, Callable
 from typing import Dict, Generic, Iterable, List, Mapping, Optional
@@ -225,7 +226,13 @@ class SSHChannel(Generic[AnyStr], SSHPacketHandler):
             self._request_waiters = []
 
         if self._session is not None:
-            self._session.connection_lost(exc)
+            # pylint: disable=broad-except
+            try:
+                self._session.connection_lost(exc)
+            except Exception:
+                self.logger.debug1('Uncaught exception in session ignored',
+                                   exc_info=sys.exc_info)
+
             self._session = None
 
         self._close_event.set()
@@ -2058,16 +2065,16 @@ class SSHTCPChannel(SSHForwardChannel, Generic[AnyStr]):
             SSHTCPSession[AnyStr]:
         """Create a new outbound TCP session"""
 
-        return (await self._open_tcp(session_factory, b'direct-tcpip',
-                                     host, port, orig_host, orig_port))
+        return await self._open_tcp(session_factory, b'direct-tcpip',
+                                    host, port, orig_host, orig_port)
 
     async def accept(self, session_factory: SSHTCPSessionFactory[AnyStr],
                      host: str, port: int, orig_host: str,
                      orig_port: int) -> SSHTCPSession[AnyStr]:
         """Create a new forwarded TCP session"""
 
-        return (await self._open_tcp(session_factory, b'forwarded-tcpip',
-                                     host, port, orig_host, orig_port))
+        return await self._open_tcp(session_factory, b'forwarded-tcpip',
+                                    host, port, orig_host, orig_port)
 
     def set_inbound_peer_names(self, dest_host: str, dest_port: int,
                                orig_host: str, orig_port: int) -> None:

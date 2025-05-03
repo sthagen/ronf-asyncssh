@@ -1,4 +1,4 @@
-# Copyright (c) 2015-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2015-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -66,6 +66,8 @@ from asyncssh import FILEXFER_TYPE_CHAR_DEVICE, FILEXFER_TYPE_BLOCK_DEVICE
 from asyncssh import FILEXFER_TYPE_FIFO
 from asyncssh import FILEXFER_ATTR_BITS_READONLY, FILEXFER_ATTR_KNOWN_TEXT
 from asyncssh import FX_OK, scp
+
+from asyncssh.misc import make_sparse_file
 
 from asyncssh.packet import SSHPacket, String, UInt32
 
@@ -615,6 +617,11 @@ class _AsyncSFTPServer(SFTPServer):
 
         super().fsync(file_obj)
 
+    async def exit(self):
+        """Shut down this SFTP server"""
+
+        super().exit()
+
 
 class _CheckSFTP(ServerTestCase):
     """Utility functions for AsyncSSH SFTP unit tests"""
@@ -632,7 +639,7 @@ class _CheckSFTP(ServerTestCase):
         except OSError: # pragma: no cover
             cls._symlink_supported = False
 
-    def _create_file(self, name, data=(), mode=None, utime=None):
+    def _create_file(self, name, data=(), offsets=(0,), mode=None, utime=None):
         """Create a test file"""
 
         if data == ():
@@ -641,7 +648,11 @@ class _CheckSFTP(ServerTestCase):
         binary = 'b' if isinstance(data, bytes) else ''
 
         with open(name, 'w' + binary) as f:
-            f.write(data)
+            make_sparse_file(f)
+
+            for offset in offsets:
+                f.seek(offset)
+                f.write(data)
 
         if mode is not None:
             os.chmod(name, mode)
@@ -659,6 +670,7 @@ class _CheckSFTP(ServerTestCase):
 
         self.assertEqual(stat.S_IMODE(attrs1.st_mode),
                          stat.S_IMODE(attrs2.st_mode))
+        self.assertEqual(attrs1.st_size, attrs2.st_size)
         self.assertEqual(int(attrs1.st_mtime), int(attrs2.st_mtime))
 
         if check_atime:
@@ -674,6 +686,22 @@ class _CheckSFTP(ServerTestCase):
         with open(name1, 'rb') as file1:
             with open(name2, 'rb') as file2:
                 self.assertEqual(file1.read(), file2.read())
+
+    async def _check_sparse_file(self, name1, name2):
+        """Check if two sparse files are equal"""
+
+        size1 = os.stat(name1).st_size
+        size2 = os.stat(name2).st_size
+        self.assertEqual(size1, size2)
+
+        with open(name1, 'rb') as file1:
+            with open(name2, 'rb') as file2:
+                ranges1 = [range async for range in
+                           LocalFile(file1).request_ranges(0, size1)]
+                ranges2 = [range async for range in
+                           LocalFile(file2).request_ranges(0, size2)]
+
+                self.assertEqual(ranges1, ranges2)
 
     def _check_stat(self, sftp_stat, local_stat):
         """Check if file attributes are equal"""
@@ -754,6 +782,47 @@ class _TestSFTP(_CheckSFTP):
                         remove('src dst')
 
     @sftp_test
+    async def test_sparse_copy(self, sftp):
+        """Test putting a sparse file over SFTP"""
+
+        for method in ('get', 'put', 'copy'):
+            with self.subTest(method=method):
+                try:
+                    self._create_file(
+                        'src', offsets=(i*1024*1024 for i in
+                                        range(24, 3840, 24)))
+                    await getattr(sftp, method)('src', 'dst')
+                    await self._check_sparse_file('src', 'dst')
+                finally:
+                    remove('src dst')
+
+    @sftp_test
+    async def test_empty_request_range(self, sftp):
+        """Test getting ranges from an empty file"""
+
+        try:
+            self._create_file('file', data=b'')
+
+            async with sftp.open('file', 'rb') as f:
+                result = [data_range async for data_range in
+                          f.request_ranges(0, 0)]
+                self.assertEqual(result, [])
+        finally:
+            remove('file')
+
+    @sftp_test
+    async def test_nonsparse_put(self, sftp):
+        """Test putting a sparse file over SFTP with sparse mode disabled"""
+
+        try:
+            self._create_file(
+                'src', offsets=(i*1024*1024 for i in range(24, 72, 24)))
+            await sftp.put('src', 'dst', sparse=False)
+            self._check_file('src', 'dst')
+        finally:
+            remove('src dst')
+
+    @sftp_test
     async def test_copy_max_requests(self, sftp):
         """Test copying a file over SFTP with max requests set"""
 
@@ -779,7 +848,7 @@ class _TestSFTP(_CheckSFTP):
                 with self.subTest(method=method):
                     try:
                         self._create_file('src')
-                        await sftp.copy('src', 'dst')
+                        await getattr(sftp, method)('src', 'dst')
                         self._check_file('src', 'dst')
                     finally:
                         remove('src dst')
@@ -3283,6 +3352,9 @@ class _TestSFTP(_CheckSFTP):
             f = await sftp.open('file')
 
             with self.assertRaises(SFTPFailure):
+                _ = [_ async for _ in f.request_ranges(0, 0)]
+
+            with self.assertRaises(SFTPFailure):
                 await f.read()
 
             with self.assertRaises(SFTPFailure):
@@ -4149,10 +4221,33 @@ class _TestSFTPCallable(_CheckSFTP):
     async def start_server(cls):
         """Start an SFTP server using a callable"""
 
-        def sftp_factory(conn):
+        def sftp_factory(chan):
             """Return an SFTP server"""
 
-            return SFTPServer(conn)
+            return SFTPServer(chan)
+
+        return await cls.create_server(sftp_factory=sftp_factory)
+
+    @sftp_test
+    async def test_stat(self, sftp):
+        """Test getting attributes on a file"""
+
+        # pylint: disable=no-self-use
+
+        await sftp.stat('.')
+
+
+class _TestSFTPCoroutine(_CheckSFTP):
+    """Unit tests for AsyncSSH SFTP factory being a coroutine"""
+
+    @classmethod
+    async def start_server(cls):
+        """Start an SFTP server using a coroutine"""
+
+        async def sftp_factory(chan):
+            """Return an SFTP server"""
+
+            return SFTPServer(chan)
 
         return await cls.create_server(sftp_factory=sftp_factory)
 
@@ -4537,7 +4632,7 @@ class _TestSFTPEOFDuringCopy(_CheckSFTP):
             self._create_file('src', 8*1024*1024*'\0')
 
             with self.assertRaises(SFTPFailure):
-                await sftp.get('src', 'dst')
+                await sftp.get('src', 'dst', sparse=False)
         finally:
             remove('src dst')
 
@@ -5498,6 +5593,22 @@ class _TestSCPAsync(_TestSCP):
         """Start an SFTP server with async callbacks"""
 
         return await cls.create_server(sftp_factory=_AsyncSFTPServer,
+                                       allow_scp=True)
+
+
+class _TestSCPCoroutine(_TestSCP):
+    """Unit test for AsyncSSH SCP with the SFTP factory being a coroutine"""
+
+    @classmethod
+    async def start_server(cls):
+        """Start an SFTP server with async callbacks"""
+
+        async def sftp_factory(chan):
+            """Return an SFTP server"""
+
+            return SFTPServer(chan)
+
+        return await cls.create_server(sftp_factory=sftp_factory,
                                        allow_scp=True)
 
 
