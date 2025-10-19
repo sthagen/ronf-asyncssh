@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
         include:
           - os: macos-latest
@@ -55,6 +55,19 @@ jobs:
           cache-dependency-path: |
             asyncssh/setup.py
             asyncssh/tox.ini
+
+      - name: Fix modules path for OpenSSL on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $openssl_path = ((Get-Command openssl).Path | Split-Path -Parent)
+          echo "OPENSSL_MODULES=$openssl_path" >> $env:GITHUB_ENV
+
+      - name: Verify legacy provider can be enabled in OpenSSL on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          openssl list -provider default -provider legacy -providers
 
       - name: Set up ccache for liboqs (Linux)
         uses: hendrikmuhs/ccache-action@v1.2
