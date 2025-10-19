@@ -71,7 +71,8 @@ try:
 except subprocess.CalledProcessError: # pragma: no cover
     _openssl_version = b''
 
-_openssl_available = _openssl_version != b''
+# Disable reliance on OpenSSL on Windows for now due to GitHub runner issues
+_openssl_available = _openssl_version != b'' and sys.platform != 'win32'
 
 if _openssl_available: # pragma: no branch
     _openssl_curves = run('openssl ecparam -list_curves')
