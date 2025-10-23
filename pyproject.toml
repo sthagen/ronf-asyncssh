@@ -15,18 +15,17 @@ classifiers = [
     'License :: OSI Approved',
     'Operating System :: MacOS :: MacOS X',
     'Operating System :: POSIX',
-    'Programming Language :: Python :: 3.8',
-    'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: 3.11',
     'Programming Language :: Python :: 3.12',
     'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
     'Topic :: Internet',
     'Topic :: Security :: Cryptography',
     'Topic :: Software Development :: Libraries :: Python Modules',
     'Topic :: System :: Networking',
 ]
-requires-python = '>= 3.6'
+requires-python = '>= 3.10'
 dependencies    = [
     'cryptography >= 39.0',
     'typing_extensions >= 4.0.0',
