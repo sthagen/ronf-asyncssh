@@ -160,12 +160,6 @@ functionality:
   if you want support for the OpenSSH post-quantum key exchange
   algorithms based on ML-KEM and SNTRUP.
 
-* Install libsodium from https://github.com/jedisct1/libsodium
-  and libnacl from https://pypi.python.org/pypi/libnacl if you have
-  a version of OpenSSL older than 1.1.1b installed and you want
-  support for Curve25519 key exchange, Ed25519 keys and certificates,
-  or the Chacha20-Poly1305 cipher.
-
 * Install libnettle from http://www.lysator.liu.se/~nisse/nettle/
   if you want support for UMAC cryptographic hashes.
 
@@ -182,28 +176,26 @@ easy to install any or all of these dependencies:
   | bcrypt
   | fido2
   | gssapi
-  | libnacl
   | pkcs11
   | pyOpenSSL
   | pywin32
 
-For example, to install bcrypt, fido2, gssapi, libnacl, pkcs11, and
-pyOpenSSL on UNIX, you can run:
+For example, to install bcrypt, fido2, gssapi, pkcs11, and pyOpenSSL
+on UNIX, you can run:
 
   ::
 
-    pip install 'asyncssh[bcrypt,fido2,gssapi,libnacl,pkcs11,pyOpenSSL]'
+    pip install 'asyncssh[bcrypt,fido2,gssapi,pkcs11,pyOpenSSL]'
 
-To install bcrypt, fido2, libnacl, pkcs11, pyOpenSSL, and pywin32 on
-Windows, you can run:
+To install bcrypt, fido2, pkcs11, pyOpenSSL, and pywin32 on Windows,
+you can run:
 
   ::
 
-    pip install 'asyncssh[bcrypt,fido2,libnacl,pkcs11,pyOpenSSL,pywin32]'
+    pip install 'asyncssh[bcrypt,fido2,pkcs11,pyOpenSSL,pywin32]'
 
-Note that you will still need to manually install the libsodium library
-listed above for libnacl to work correctly and/or libnettle for UMAC
-support. Unfortunately, since liboqs, libsodium, and libnettle are not
+Note that you will still need to manually install the libnettle library
+for UMAC support. Unfortunately, since liboqs and libnettle are not
 Python packages, they cannot be directly installed using pip.
 
 Installing the development branch

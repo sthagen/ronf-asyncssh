@@ -66,11 +66,11 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt update
-          sudo apt install -y --no-install-recommends libnettle8 libsodium-dev libssl-dev libkrb5-dev ssh cmake ninja-build
+          sudo apt install -y --no-install-recommends libnettle8 libssl-dev libkrb5-dev ssh cmake ninja-build
 
       - name: Install macOS dependencies
         if: ${{ runner.os == 'macOS' }}
-        run: brew install nettle liboqs libsodium
+        run: brew install nettle liboqs
 
       - name: Install nettle (Windows)
         if: ${{ runner.os == 'Windows' }}
