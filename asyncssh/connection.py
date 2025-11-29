@@ -877,6 +877,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._peer_addr = ''
         self._peer_port = 0
         self._tcp_keepalive = options.tcp_keepalive
+        self._utf8_decode_errors = options.utf8_decode_errors
         self._owner: Optional[Union[SSHClient, SSHServer]] = None
         self._extra: Dict[str, object] = {}
 
@@ -1041,6 +1042,11 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         """A logger associated with this connection"""
 
         return self._logger
+
+    def _decode_utf8(self, msg_bytes) -> str:
+        """Decode UTF-8 bytes, honoring utf8_decode_errors setting"""
+
+        return msg_bytes.decode('utf-8', self._utf8_decode_errors)
 
     def _cleanup(self, exc: Optional[Exception]) -> None:
         """Clean up this connection"""
@@ -2193,7 +2199,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         packet.check_end()
 
         try:
-            reason = reason_bytes.decode('utf-8')
+            reason = self._decode_utf8(reason_bytes)
             lang = lang_bytes.decode('ascii')
         except UnicodeDecodeError:
             raise ProtocolError('Invalid disconnect message') from None
@@ -2236,7 +2242,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         packet.check_end()
 
         try:
-            msg = msg_bytes.decode('utf-8')
+            msg = self._decode_utf8(msg_bytes)
             lang = lang_bytes.decode('ascii')
         except UnicodeDecodeError:
             raise ProtocolError('Invalid debug message') from None
@@ -2638,7 +2644,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         packet.check_end()
 
         try:
-            msg = msg_bytes.decode('utf-8')
+            msg = self._decode_utf8(msg_bytes)
             lang = lang_bytes.decode('ascii')
         except UnicodeDecodeError:
             raise ProtocolError('Invalid userauth banner') from None
@@ -2755,7 +2761,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         packet.check_end()
 
         try:
-            reason = reason_bytes.decode('utf-8')
+            reason = self._decode_utf8(reason_bytes)
             lang = lang_bytes.decode('ascii')
         except UnicodeDecodeError:
             raise ProtocolError('Invalid channel open failure') from None
@@ -4373,8 +4379,8 @@ class SSHClientConnection(SSHConnection):
         window: int
         max_pktsize: int
 
-        chan = SSHClientChannel(self, self._loop, encoding, errors,
-                                window, max_pktsize)
+        chan = SSHClientChannel(self, self._loop, self._utf8_decode_errors,
+                                encoding, errors, window, max_pktsize)
 
         session = await chan.create(session_factory, command, subsystem,
                                     new_env, request_pty, term_type, term_size,
@@ -5745,9 +5751,9 @@ class SSHClientConnection(SSHConnection):
                                                     env=env, send_env=send_env,
                                                     encoding=None)
 
-        return await start_sftp_client(self, self._loop, reader, writer,
-                                       path_encoding, path_errors,
-                                       sftp_version)
+        return await start_sftp_client(self, self._loop,
+                                       self._utf8_decode_errors, reader, writer,
+                                       path_encoding, path_errors, sftp_version)
 
 
 class SSHServerConnection(SSHConnection):
@@ -7278,6 +7284,7 @@ class SSHConnectionOptions(Options, Generic[_Options]):
     family: int
     local_addr: HostPort
     tcp_keepalive: bool
+    utf8_decode_errors: str
     canonicalize_hostname: Union[bool, str]
     canonical_domains: Sequence[str]
     canonicalize_fallback_local: bool
@@ -7323,6 +7330,7 @@ class SSHConnectionOptions(Options, Generic[_Options]):
                 passphrase: Optional[BytesOrStr],
                 proxy_command: DefTuple[_ProxyCommand], family: DefTuple[int],
                 local_addr: DefTuple[HostPort], tcp_keepalive: DefTuple[bool],
+                utf8_decode_errors: str,
                 canonicalize_hostname: DefTuple[Union[bool, str]],
                 canonical_domains: DefTuple[Sequence[str]],
                 canonicalize_fallback_local: DefTuple[bool],
@@ -7386,6 +7394,8 @@ class SSHConnectionOptions(Options, Generic[_Options]):
 
         self.tcp_keepalive = cast(bool, tcp_keepalive if tcp_keepalive != ()
             else config.get('TCPKeepAlive', True))
+
+        self.utf8_decode_errors = utf8_decode_errors
 
         self.canonicalize_hostname = \
             cast(Union[bool, str], canonicalize_hostname
@@ -7812,6 +7822,13 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :param tcp_keepalive: (optional)
            Whether or not to enable keepalive probes at the TCP level to
            detect broken connections, defaulting to `True`.
+       :param utf8_decode_errors: (optional)
+           Error handling strategy to apply when UTF-8 decode errors
+           occur in SSH protocol messages, defaulting to 'strict'
+           which shuts down the connection with a ProtocolError.
+           Choosing other strategies can allow the message parsing
+           to proceed with invalid bytes in the message being removed
+           or replaced.
        :param canonicalize_hostname: (optional)
            Whether or not to enable hostname canonicalization, defaulting
            to `False`, in which case hostnames are passed as-is to the
@@ -7984,6 +8001,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
        :type keepalive_interval: *see* :ref:`SpecifyingTimeIntervals`
        :type keepalive_count_max: `int`
        :type tcp_keepalive: `bool`
+       :type utf8_decode_errors: `str`
        :type canonicalize_hostname: `bool` or `'always'`
        :type canonical_domains: `list` of `str`
        :type canonicalize_fallback_local: `bool`
@@ -8069,6 +8087,7 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
                 family: DefTuple[int] = (),
                 local_addr: DefTuple[HostPort] = (),
                 tcp_keepalive: DefTuple[bool] = (),
+                utf8_decode_errors: str = 'strict',
                 canonicalize_hostname: DefTuple[Union[bool, str]] = (),
                 canonical_domains: DefTuple[Sequence[str]] = (),
                 canonicalize_fallback_local: DefTuple[bool] = (),
@@ -8180,10 +8199,11 @@ class SSHClientConnectionOptions(SSHConnectionOptions):
 
         super().prepare(config, client_factory or SSHClient, client_version,
                         host, port, tunnel, passphrase, proxy_command, family,
-                        local_addr, tcp_keepalive, canonicalize_hostname,
-                        canonical_domains, canonicalize_fallback_local,
-                        canonicalize_max_dots, canonicalize_permitted_cnames,
-                        kex_algs, encryption_algs, mac_algs, compression_algs,
+                        local_addr, tcp_keepalive, utf8_decode_errors,
+                        canonicalize_hostname, canonical_domains,
+                        canonicalize_fallback_local, canonicalize_max_dots,
+                        canonicalize_permitted_cnames, kex_algs,
+                        encryption_algs, mac_algs, compression_algs,
                         signature_algs, host_based_auth, public_key_auth,
                         kbdint_auth, password_auth, x509_trusted_certs,
                         x509_trusted_cert_paths, x509_purposes, rekey_bytes,
@@ -8636,6 +8656,13 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
        :param tcp_keepalive: (optional)
            Whether or not to enable keepalive probes at the TCP level to
            detect broken connections, defaulting to `True`.
+       :param utf8_decode_errors: (optional)
+           Error handling strategy to apply when UTF-8 decode errors
+           occur in SSH protocol messages, defaulting to 'strict'
+           which shuts down the connection with a ProtocolError.
+           Choosing other strategies can allow the message parsing
+           to proceed with invalid bytes in the message being removed
+           or replaced.
        :param canonicalize_hostname: (optional)
            Whether or not to enable hostname canonicalization, defaulting
            to `False`, in which case hostnames are passed as-is to the
@@ -8732,6 +8759,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
        :type keepalive_interval: *see* :ref:`SpecifyingTimeIntervals`
        :type keepalive_count_max: `int`
        :type tcp_keepalive: `bool`
+       :type utf8_decode_errors: `str`
        :type canonicalize_hostname: `bool` or `'always'`
        :type canonical_domains: `list` of `str`
        :type canonicalize_fallback_local: `bool`
@@ -8790,6 +8818,7 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
                 family: DefTuple[int] = (),
                 local_addr: DefTuple[HostPort] = (),
                 tcp_keepalive: DefTuple[bool] = (),
+                utf8_decode_errors: str = 'strict',
                 canonicalize_hostname: DefTuple[Union[bool, str]] = (),
                 canonical_domains: DefTuple[Sequence[str]] = (),
                 canonicalize_fallback_local: DefTuple[bool] = (),
@@ -8865,10 +8894,11 @@ class SSHServerConnectionOptions(SSHConnectionOptions):
 
         super().prepare(config, server_factory or SSHServer, server_version,
                         host, port, tunnel, passphrase, proxy_command, family,
-                        local_addr, tcp_keepalive, canonicalize_hostname,
-                        canonical_domains, canonicalize_fallback_local,
-                        canonicalize_max_dots, canonicalize_permitted_cnames,
-                        kex_algs, encryption_algs, mac_algs, compression_algs,
+                        local_addr, tcp_keepalive, utf8_decode_errors,
+                        canonicalize_hostname, canonical_domains,
+                        canonicalize_fallback_local, canonicalize_max_dots,
+                        canonicalize_permitted_cnames, kex_algs,
+                        encryption_algs, mac_algs, compression_algs,
                         signature_algs, host_based_auth, public_key_auth,
                         kbdint_auth, password_auth, x509_trusted_certs,
                         x509_trusted_cert_paths, x509_purposes,

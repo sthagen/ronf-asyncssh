@@ -145,6 +145,9 @@ class _ServerChannel(asyncssh.SSHServerChannel):
             if args[0] == String('invalid'):
                 args = (String(b'\xff'),) + args[1:]
 
+            if args[2] == String('invalid'):
+                args = args[:2] + (String(b'\xff'),) + args[3:]
+
             if args[3] == String('invalid'):
                 args = args[:3] + (String(b'\xff'),)
 
@@ -429,6 +432,8 @@ class _ChannelServer(Server):
             stdin.channel.exit_with_signal('INT', False, 'closed_signal')
         elif action == 'invalid_exit_signal':
             stdin.channel.exit_with_signal('invalid')
+        elif action == 'invalid_exit_msg':
+            stdin.channel.exit_with_signal('INT', False, 'invalid', '')
         elif action == 'invalid_exit_lang':
             stdin.channel.exit_with_signal('INT', False, '', 'invalid')
         elif action == 'window_after_close':
@@ -1593,6 +1598,27 @@ class _TestChannel(ServerTestCase):
             chan, _ = await _create_session(conn, 'invalid_exit_signal')
 
             await chan.wait_closed()
+            self.assertIsNone(chan.get_exit_signal())
+
+    @asynctest
+    async def test_invalid_exit_msg(self):
+        """Test delivery of invalid exit signal message"""
+
+        async with self.connect() as conn:
+            chan, _ = await _create_session(conn, 'invalid_exit_msg')
+
+            await chan.wait_closed()
+            self.assertIsNone(chan.get_exit_signal())
+
+    @asynctest
+    async def test_invalid_exit_msg_error_handler(self):
+        """Test delivery of invalid exit signal message"""
+
+        async with self.connect(utf8_decode_errors='ignore') as conn:
+            chan, _ = await _create_session(conn, 'invalid_exit_msg')
+
+            await chan.wait_closed()
+            self.assertIsNotNone(chan.get_exit_signal())
 
     @asynctest
     async def test_invalid_exit_lang(self):

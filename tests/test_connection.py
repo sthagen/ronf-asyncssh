@@ -350,16 +350,16 @@ class _InvalidAuthBannerServer(Server):
         return False
 
 
-class _VersionRecordingClient(asyncssh.SSHClient):
-    """Client for testing custom client version"""
+class _AuthBannerRecordingClient(asyncssh.SSHClient):
+    """Client which records auth banner"""
 
     def __init__(self):
-        self.reported_version = None
+        self.auth_banner = None
 
     def auth_banner_received(self, msg, lang):
         """Record the client version reported in the auth banner"""
 
-        self.reported_version = msg
+        self.auth_banner = msg
 
 
 class _VersionReportingServer(Server):
@@ -2542,10 +2542,25 @@ class _TestInvalidAuthBanner(ServerTestCase):
 
     @asynctest
     async def test_invalid_auth_banner(self):
-        """Test server sending invalid auth banner"""
+        """Test server sending invalid UTF-8 in auth banner"""
 
         with self.assertRaises(asyncssh.ProtocolError):
             await self.connect()
+
+    @asynctest
+    async def test_invalid_auth_banner_error_handler(self):
+        """Test error handler for invalid UTF-8 in auth banner"""
+
+        for errors in ('ignore', 'replace', 'backslashreplace',
+                       'surrogateescape'):
+            conn, client = \
+                await self.create_connection(_AuthBannerRecordingClient,
+                                             utf8_decode_errors=errors)
+
+            async with conn:
+                self.assertEqual(client.auth_banner,
+                                 b'\xff'.decode('utf-8', errors))
+
 
 
 class _TestExpiredServerHostCertificate(ServerTestCase):
@@ -2585,11 +2600,11 @@ class _TestCustomClientVersion(ServerTestCase):
         """Check custom client version"""
 
         conn, client = \
-            await self.create_connection(_VersionRecordingClient,
+            await self.create_connection(_AuthBannerRecordingClient,
                                          client_version=version)
 
         async with conn:
-            self.assertEqual(client.reported_version, 'SSH-2.0-custom')
+            self.assertEqual(client.auth_banner, 'SSH-2.0-custom')
 
     @asynctest
     async def test_custom_client_version(self):

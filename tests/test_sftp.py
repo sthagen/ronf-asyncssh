@@ -3791,6 +3791,28 @@ class _TestSFTP(_CheckSFTP):
             with self.assertRaises(SFTPBadMessage):
                 await sftp.open('file')
 
+    @asynctest
+    async def test_malformed_ok_response_error_handler(self):
+        """Test error handler for an FX_OK response with invalid UTF-8"""
+
+        async def _malformed_ok_response(self, pkttype, pktid, packet):
+            """Send an FX_OK response containing invalid Unicode"""
+
+            # pylint: disable=unused-argument
+
+            self.send_packet(FXP_STATUS, pktid, UInt32(pktid), UInt32(FX_OK),
+                             String(b'\xff'), String(''))
+
+        async with self.connect(utf8_decode_errors='ignore') as conn:
+            async with conn.start_sftp_client() as sftp:
+                handle = await sftp.open('file', 'w')
+
+                with patch('asyncssh.sftp.SFTPServerHandler._process_packet',
+                           _malformed_ok_response):
+                    await handle.close()
+
+                remove('file')
+
     @sftp_test
     async def test_short_ok_response(self, sftp):
         """Test sending an FX_OK response without a reason and lang"""

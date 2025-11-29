@@ -1125,10 +1125,12 @@ class SSHClientChannel(SSHChannel, Generic[AnyStr]):
     _read_datatypes = {EXTENDED_DATA_STDERR}
 
     def __init__(self, conn: 'SSHClientConnection',
-                 loop: asyncio.AbstractEventLoop, encoding: Optional[str],
-                 errors: str, window: int, max_pktsize: int):
+                 loop: asyncio.AbstractEventLoop, utf8_decode_errors: str,
+                 encoding: Optional[str], errors: str, window: int,
+                 max_pktsize: int):
         super().__init__(conn, loop, encoding, errors, window, max_pktsize)
 
+        self._utf8_decode_errors = utf8_decode_errors
         self._exit_status: Optional[int] = None
         self._exit_signal: Optional[_ExitSignal] = None
 
@@ -1299,7 +1301,7 @@ class SSHClientChannel(SSHChannel, Generic[AnyStr]):
 
         try:
             signal = signal_bytes.decode('ascii')
-            msg = msg_bytes.decode('utf-8')
+            msg = msg_bytes.decode('utf-8', self._utf8_decode_errors)
             lang = lang_bytes.decode('ascii')
         except UnicodeDecodeError:
             raise ProtocolError('Invalid exit signal request') from None
