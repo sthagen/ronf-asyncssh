@@ -11,7 +11,7 @@ AsyncSSH: Asynchronous SSH for Python
 =====================================
 
 AsyncSSH is a Python package which provides an asynchronous client and
-server implementation of the SSHv2 protocol on top of the Python 3.6+
+server implementation of the SSHv2 protocol on top of the Python 3.10+
 asyncio framework.
 
 .. code:: python
@@ -101,7 +101,7 @@ License
 
 This package is released under the following terms:
 
-  Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
+  Copyright (c) 2013-2025 by Ron Frederick <ronf@timeheart.net> and others.
 
   This program and the accompanying materials are made available under
   the terms of the Eclipse Public License v2.0 which accompanies this
@@ -126,8 +126,8 @@ Prerequisites
 
 To use AsyncSSH 2.0 or later, you need the following:
 
-* Python 3.6 or later
-* cryptography (PyCA) 3.1 or later
+* Python 3.10 or later
+* cryptography (PyCA) 39.0 or later
 
 Installation
 ------------
@@ -160,12 +160,6 @@ functionality:
   if you want support for the OpenSSH post-quantum key exchange
   algorithms based on ML-KEM and SNTRUP.
 
-* Install libsodium from https://github.com/jedisct1/libsodium
-  and libnacl from https://pypi.python.org/pypi/libnacl if you have
-  a version of OpenSSL older than 1.1.1b installed and you want
-  support for Curve25519 key exchange, Ed25519 keys and certificates,
-  or the Chacha20-Poly1305 cipher.
-
 * Install libnettle from http://www.lysator.liu.se/~nisse/nettle/
   if you want support for UMAC cryptographic hashes.
 
@@ -182,28 +176,26 @@ easy to install any or all of these dependencies:
   | bcrypt
   | fido2
   | gssapi
-  | libnacl
   | pkcs11
   | pyOpenSSL
   | pywin32
 
-For example, to install bcrypt, fido2, gssapi, libnacl, pkcs11, and
-pyOpenSSL on UNIX, you can run:
+For example, to install bcrypt, fido2, gssapi, pkcs11, and pyOpenSSL
+on UNIX, you can run:
 
   ::
 
-    pip install 'asyncssh[bcrypt,fido2,gssapi,libnacl,pkcs11,pyOpenSSL]'
+    pip install 'asyncssh[bcrypt,fido2,gssapi,pkcs11,pyOpenSSL]'
 
-To install bcrypt, fido2, libnacl, pkcs11, pyOpenSSL, and pywin32 on
-Windows, you can run:
+To install bcrypt, fido2, pkcs11, pyOpenSSL, and pywin32 on Windows,
+you can run:
 
   ::
 
-    pip install 'asyncssh[bcrypt,fido2,libnacl,pkcs11,pyOpenSSL,pywin32]'
+    pip install 'asyncssh[bcrypt,fido2,pkcs11,pyOpenSSL,pywin32]'
 
-Note that you will still need to manually install the libsodium library
-listed above for libnacl to work correctly and/or libnettle for UMAC
-support. Unfortunately, since liboqs, libsodium, and libnettle are not
+Note that you will still need to manually install the libnettle library
+for UMAC support. Unfortunately, since liboqs and libnettle are not
 Python packages, they cannot be directly installed using pip.
 
 Installing the development branch

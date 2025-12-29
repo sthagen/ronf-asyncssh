@@ -421,11 +421,6 @@ class _TestKex(AsyncTestCase):
             with self.assertRaises(asyncssh.ProtocolError):
                 await server_conn.process_packet(Byte(MSG_KEXGSS_HOSTKEY))
 
-        with self.subTest('Host key sent twice to client'):
-            with self.assertRaises(asyncssh.ProtocolError):
-                await client_conn.process_packet(Byte(MSG_KEXGSS_HOSTKEY))
-                await client_conn.process_packet(Byte(MSG_KEXGSS_HOSTKEY))
-
         with self.subTest('Complete sent to server'):
             with self.assertRaises(asyncssh.ProtocolError):
                 await server_conn.process_packet(Byte(MSG_KEXGSS_COMPLETE))

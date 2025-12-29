@@ -13,21 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022]
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
-        include:
-          - os: macos-latest
-            python-version: "3.10"
-            openssl-version: "3"
-          - os: macos-latest
-            python-version: "3.11"
-            openssl-version: "3"
-          - os: macos-latest
-            python-version: "3.12"
-            openssl-version: "3"
-          - os: macos-latest
-            python-version: "3.13"
-            openssl-version: "3"
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     runs-on: ${{ matrix.os }}
     env:
@@ -56,6 +43,19 @@ jobs:
             asyncssh/setup.py
             asyncssh/tox.ini
 
+      - name: Fix modules path for OpenSSL on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $openssl_path = ((Get-Command openssl).Path | Split-Path -Parent)
+          echo "OPENSSL_MODULES=$openssl_path" >> $env:GITHUB_ENV
+
+      - name: Verify legacy provider can be enabled in OpenSSL on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          openssl list -provider default -provider legacy -providers
+
       - name: Set up ccache for liboqs (Linux)
         uses: hendrikmuhs/ccache-action@v1.2
         if: ${{ runner.os == 'Linux' }}
@@ -66,15 +66,11 @@ jobs:
         if: ${{ runner.os == 'Linux' }}
         run: |
           sudo apt update
-          sudo apt install -y --no-install-recommends libnettle8 libsodium-dev libssl-dev libkrb5-dev ssh cmake ninja-build
+          sudo apt install -y --no-install-recommends libnettle8 libssl-dev libkrb5-dev ssh cmake ninja-build
 
       - name: Install macOS dependencies
         if: ${{ runner.os == 'macOS' }}
-        run: brew install nettle liboqs libsodium openssl
-
-      - name: Provide OpenSSL 3
-        if: ${{ runner.os == 'macOS' && matrix.openssl-version == '3' }}
-        run: echo "/usr/local/opt/openssl@3/bin" >> $GITHUB_PATH
+        run: brew install nettle liboqs
 
       - name: Install nettle (Windows)
         if: ${{ runner.os == 'Windows' }}

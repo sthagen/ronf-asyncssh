@@ -1,4 +1,4 @@
-# Copyright (c) 2013-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2013-2025 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -85,8 +85,13 @@ class SSHForwarder(asyncio.BaseProtocol):
     def write(self, data: bytes) -> None:
         """Write data to the transport"""
 
-        assert self._transport is not None
-        self._transport.write(data)
+        if not self._transport:
+            return # pragma: no cover
+
+        try:
+            self._transport.write(data)
+        except OSError: # pragma: no cover
+            pass
 
     def write_eof(self) -> None:
         """Write end of file to the transport"""

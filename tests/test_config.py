@@ -189,6 +189,18 @@ class _TestConfig(TempDirTestCase):
         self.assertEqual(config.get('AddressFamily'), socket.AF_INET)
         self.assertEqual(config.get('Port'), 2222)
 
+    def test_glob_with_subdir(self):
+        """Test including a glob which matches on a subdirectory"""
+
+        os.mkdir('.ssh/config.d')
+        os.mkdir('.ssh/config.d/subdir')
+
+        with open('.ssh/config.d/file', 'w') as f:
+            f.write('Port 2222\n')
+
+        config = self._parse_config('Include config.d/*')
+        self.assertEqual(config.get('Port'), 2222)
+
     def test_match_all(self):
         """Test a match block which always matches"""
 

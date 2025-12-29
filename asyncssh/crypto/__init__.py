@@ -62,11 +62,11 @@ __all__ = [
     'BasicCipher', 'ChachaCipher', 'CryptoKey', 'Curve25519DH', 'Curve448DH',
     'DH', 'DSAPrivateKey', 'DSAPublicKey', 'ECDH', 'ECDSAPrivateKey',
     'ECDSAPublicKey', 'EdDSAPrivateKey', 'EdDSAPublicKey', 'GCMCipher', 'PQDH',
-    'PyCAKey', 'RSAPrivateKey', 'RSAPublicKey', 'chacha_available',
-    'curve25519_available', 'curve448_available', 'X509Certificate',
-    'X509Name', 'X509NamePattern', 'ed25519_available', 'ed448_available',
-    'generate_x509_certificate', 'get_cipher_params', 'import_x509_certificate',
-    'lookup_ec_curve_by_params', 'mlkem_available', 'pbkdf2_hmac',
-    'register_cipher', 'sntrup_available', 'umac32', 'umac64', 'umac96',
-    'umac128'
+    'PyCAKey', 'RSAPrivateKey', 'RSAPublicKey', 'X509Certificate',
+    'X509Name', 'X509NamePattern', 'chacha_available', 'curve25519_available',
+    'curve448_available', 'ed25519_available', 'ed448_available',
+    'generate_x509_certificate', 'get_cipher_params',
+    'import_x509_certificate', 'lookup_ec_curve_by_params', 'mlkem_available',
+    'pbkdf2_hmac', 'register_cipher', 'sntrup_available', 'umac32', 'umac64',
+    'umac96', 'umac128'
 ]
