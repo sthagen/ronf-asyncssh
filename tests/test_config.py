@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2024 by Ron Frederick <ronf@timeheart.net> and others.
+# Copyright (c) 2020-2026 by Ron Frederick <ronf@timeheart.net> and others.
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License v2.0 which accompanies this
@@ -388,6 +388,19 @@ class _TestClientConfig(_TestConfig):
         self.assertEqual(config.get('BindAddress'), 'addr')
         self.assertEqual(config.get('Port'), 2222)
 
+    def test_match_local_network(self):
+        """Test matching against a local network"""
+
+        config = self._parse_config('Match localnetwork 127.0.0.1\n'
+                                    '  Hostname newhost\n'
+                                    'Match localnetwork 0.0.0.0\n'
+                                    '  Port 1111\n'
+                                    'Match localnetwork ::1\n'
+                                    '  Port 2222')
+
+        self.assertEqual(config.get('Hostname'), 'newhost')
+        self.assertEqual(config.get('Port'), 2222)
+
     def test_host_key_alias(self):
         """Test setting HostKeyAlias"""
 
@@ -584,6 +597,13 @@ class _TestServerConfig(_TestConfig):
 
         config = self._parse_config('Match address 127.0.0.0/8\nPermitTTY no')
         self.assertEqual(config.get('PermitTTY'), False)
+
+    def test_illegal_user(self):
+        """Test update of match options"""
+
+        for user in ('..', '/xxx', '\\xxx'):
+            with self.assertRaises(asyncssh.IllegalUserName):
+                self._parse_config('AuthorizedKeysFile %u', user=user)
 
     def test_reload(self):
         """Test update of match options"""

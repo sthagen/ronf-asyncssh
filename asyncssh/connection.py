@@ -82,6 +82,7 @@ from .constants import OPEN_UNKNOWN_CHANNEL_TYPE
 
 from .encryption import Encryption, get_encryption_algs
 from .encryption import get_default_encryption_algs
+from .encryption import encryption_needs_mac
 from .encryption import get_encryption_params, get_encryption
 
 from .forward import SSHForwarder
@@ -196,6 +197,9 @@ class _TunnelProtocol(Protocol):
     def close(self) -> None:
         """Close this tunnel"""
 
+    async def wait_closed(self):
+        """Wait for this tunnel to close"""
+
 class _TunnelConnectorProtocol(_TunnelProtocol, Protocol):
     """Protocol to open a connection to tunnel an SSH connection over"""
 
@@ -279,7 +283,7 @@ async def _canonicalize_host(loop: asyncio.AbstractEventLoop,
                              options: 'SSHConnectionOptions') -> Optional[str]:
     """Canonicalize a host name"""
 
-    host = options.host
+    host = options.orig_host
 
     if not options.canonicalize_hostname or not options.canonical_domains:
         logger.info('Host canonicalization disabled')
@@ -387,6 +391,11 @@ async def _open_proxy(
 
             self._conn.connection_lost(exc)
 
+        def process_exited(self):
+            """Called when the child process has exited"""
+
+            self._close_event.set()
+
         def write(self, data: bytes) -> None:
             """Write data to this tunnel"""
 
@@ -403,13 +412,20 @@ async def _open_proxy(
 
             if self._transport: # pragma: no cover
                 self._transport.close()
+                self._transport = None
 
-            self._close_event.set()
+        async def wait_closed(self):
+            """Wait for this subprocess to exit"""
 
+            await self._close_event.wait()
 
-    _, tunnel = await loop.subprocess_exec(_ProxyCommandTunnel, *command)
+    _, tunnel = await loop.subprocess_exec(_ProxyCommandTunnel, *command,
+                                           start_new_session=True)
 
-    return cast(_Conn, cast(_ProxyCommandTunnel, tunnel).get_conn())
+    conn = cast(_Conn, cast(_ProxyCommandTunnel, tunnel).get_conn())
+    conn.set_tunnel(tunnel)
+
+    return conn
 
 
 async def _open_tunnel(tunnels: object, options: _Options,
@@ -437,8 +453,8 @@ async def _open_tunnel(tunnels: object, options: _Options,
 
             last_conn = conn
             conn = await connect(host, port, username=username,
-                                 passphrase=options.passphrase, tunnel=conn,
-                                 config=config)
+                                 passphrase=options.passphrase,
+                                 tunnel=conn or (), config=config)
             conn.set_tunnel(last_conn)
 
             if options.canonicalize_hostname != 'always':
@@ -459,7 +475,7 @@ async def _connect(options: _Options, config: DefTuple[ConfigPaths],
 
     canon_host = await _canonicalize_host(loop, options)
 
-    host = canon_host if canon_host else options.host
+    host = canon_host if canon_host else options.orig_host
     canonical = bool(canon_host)
     final = options.config.has_match_final()
 
@@ -651,7 +667,8 @@ def _expand_algs(alg_type: str, algs: str,
 
 def _select_algs(alg_type: str, algs: _AlgsArg, config_algs: _AlgsArg,
                  possible_algs: List[bytes], default_algs: List[bytes],
-                 none_value: Optional[bytes] = None) -> Sequence[bytes]:
+                 none_value: Optional[bytes] = None,
+                 allow_empty: bool = False) -> Sequence[bytes]:
     """Select a set of allowed algorithms"""
 
     if algs == ():
@@ -682,6 +699,8 @@ def _select_algs(alg_type: str, algs: _AlgsArg, config_algs: _AlgsArg,
         return result
     elif none_value:
         return [none_value]
+    elif allow_empty:
+        return []
     else:
         raise ValueError(f'No {alg_type} algorithms selected')
 
@@ -714,7 +733,7 @@ def _validate_algs(config: SSHConfig, kex_algs_arg: _AlgsArg,
                             get_default_encryption_algs())
     mac_algs = _select_algs('MAC', mac_algs_arg,
                             cast(_AlgsArg, config.get('MACs', ())),
-                            get_mac_algs(), get_default_mac_algs())
+                            get_mac_algs(), get_default_mac_algs(), None, True)
     cmp_algs = _select_algs('compression', cmp_algs_arg,
                             cast(_AlgsArg, config.get_compression_algs()),
                             get_compression_algs(),
@@ -1090,14 +1109,14 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
             self._owner = None
 
+        if self._tunnel:
+            self._tunnel.close()
+            self._tunnel = None
+
         self._cancel_login_timer()
         self._close_event.set()
 
         self._inpbuf = b''
-
-        if self._tunnel:
-            self._tunnel.close()
-            self._tunnel = None
 
     def _cancel_login_timer(self) -> None:
         """Cancel the login timer"""
@@ -1489,8 +1508,8 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         raise KeyExchangeFailed(
             f'No matching {alg_type} algorithm found, sent '
-            f'{b",".join(local_algs).decode("ascii")} and received '
-            f'{b",".join(remote_algs).decode("ascii")}')
+            f'{b",".join(local_algs).decode("ascii") or "<None>"} and received '
+            f'{b",".join(remote_algs).decode("ascii") or "<None>"}')
 
     def _get_extra_kex_algs(self) -> List[bytes]:
         """Return the extra kex algs to add"""
@@ -1852,7 +1871,7 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self.logger.debug2('  Key exchange algs: %s', kex_algs)
         self.logger.debug2('  Host key algs: %s', host_key_algs)
         self.logger.debug2('  Encryption algs: %s', self._enc_algs)
-        self.logger.debug2('  MAC algs: %s', self._mac_algs)
+        self.logger.debug2('  MAC algs: %s', self._mac_algs or '<None>')
         self.logger.debug2('  Compression algs: %s', self._cmp_algs)
 
         cookie = os.urandom(16)
@@ -1904,12 +1923,6 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         enc_keysize_sc, enc_ivsize_sc, enc_blocksize_sc, \
         mac_keysize_sc, mac_hashsize_sc, etm_sc = \
             get_encryption_params(self._enc_alg_sc, self._mac_alg_sc)
-
-        if mac_keysize_cs == 0:
-            self._mac_alg_cs = self._enc_alg_cs
-
-        if mac_keysize_sc == 0:
-            self._mac_alg_sc = self._enc_alg_sc
 
         cmp_after_auth_cs = get_compression_params(self._cmp_alg_cs)
         cmp_after_auth_sc = get_compression_params(self._cmp_alg_sc)
@@ -2406,11 +2419,11 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self.logger.debug2('  Host key algs: %s', peer_host_key_algs)
         self.logger.debug2('  Client to server:')
         self.logger.debug2('    Encryption algs: %s', enc_algs_cs)
-        self.logger.debug2('    MAC algs: %s', mac_algs_cs)
+        self.logger.debug2('    MAC algs: %s', mac_algs_cs or '<None>')
         self.logger.debug2('    Compression algs: %s', cmp_algs_cs)
         self.logger.debug2('  Server to client:')
         self.logger.debug2('    Encryption algs: %s', enc_algs_sc)
-        self.logger.debug2('    MAC algs: %s', mac_algs_sc)
+        self.logger.debug2('    MAC algs: %s', mac_algs_sc or '<None>')
         self.logger.debug2('    Compression algs: %s', cmp_algs_sc)
 
         kex_alg = self._choose_alg('key exchange', kex_algs, peer_kex_algs)
@@ -2431,8 +2444,17 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
         self._enc_alg_sc = self._choose_alg('encryption', self._enc_algs,
                                             enc_algs_sc)
 
-        self._mac_alg_cs = self._choose_alg('MAC', self._mac_algs, mac_algs_cs)
-        self._mac_alg_sc = self._choose_alg('MAC', self._mac_algs, mac_algs_sc)
+        if encryption_needs_mac(self._enc_alg_cs):
+            self._mac_alg_cs = self._choose_alg('MAC', self._mac_algs,
+                                                mac_algs_cs)
+        else:
+            self._mac_alg_cs = self._enc_alg_cs
+
+        if encryption_needs_mac(self._enc_alg_sc):
+            self._mac_alg_sc = self._choose_alg('MAC', self._mac_algs,
+                                                mac_algs_sc)
+        else:
+            self._mac_alg_sc = self._enc_alg_sc
 
         self._cmp_alg_cs = self._choose_alg('compression', self._cmp_algs,
                                             cmp_algs_cs)
@@ -2850,6 +2872,9 @@ class SSHConnection(SSHPacketHandler, asyncio.Protocol):
 
         if self._agent:
             await self._agent.wait_closed()
+
+        if self._tunnel:
+            await self._tunnel.wait_closed()
 
         await self._close_event.wait()
 
@@ -7277,6 +7302,7 @@ class SSHConnectionOptions(Options, Generic[_Options]):
     waiter: Optional[asyncio.Future]
     protocol_factory: _ProtocolFactory
     version: bytes
+    orig_host: str
     host: str
     port: int
     tunnel: object
@@ -7369,6 +7395,7 @@ class SSHConnectionOptions(Options, Generic[_Options]):
         self.protocol_factory = protocol_factory
         self.version = _validate_version(version)
 
+        self.orig_host = host
         self.host = cast(str, config.get('Hostname', host))
         self.port = cast(int, port if port != () else
             config.get('Port', DEFAULT_PORT))

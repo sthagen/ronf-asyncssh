@@ -1133,8 +1133,17 @@ class _TestConnection(ServerTestCase):
     async def test_empty_mac_algs(self):
         """Test connecting with an empty list of MAC algorithms"""
 
-        with self.assertRaises(ValueError):
-            await self.connect(mac_algs=[])
+        with self.assertRaises(asyncssh.KeyExchangeFailed):
+            await self.connect(encryption_algs=['aes128-ctr'], mac_algs=[])
+
+    @asynctest
+    async def test_empty_mac_algs_with_aead_cipher(self):
+        """Test connecting with an empty list of MAC algs with AEAD cipher"""
+
+        async with self.connect(
+                encryption_algs=['chacha20-poly1305@openssh.com'],
+                mac_algs=[]):
+            pass
 
     @asynctest
     async def test_invalid_mac_alg(self):
@@ -1933,6 +1942,25 @@ class _TestConnectionListenSock(ServerTestCase):
         with self.assertLogs(level='INFO'):
             async with self.connect():
                 pass
+
+
+class _TestConnectionEmptyServerMACAlgs(ServerTestCase):
+    """Unit test server with empty list of MAC algs and AEAD cipher"""
+
+    @classmethod
+    async def start_server(cls):
+        """Start an SSH server to connect to"""
+
+        return await cls.create_server(
+            _TunnelServer, encryption_algs=['chacha20-poly1305@openssh.com'],
+            mac_algs=[])
+
+    @asynctest
+    async def test_connect(self):
+        """Test connecting to server advertizing empty MAC algs"""
+
+        async with self.connect():
+            pass
 
 
 class _TestConnectionAsyncAcceptor(ServerTestCase):
