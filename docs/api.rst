@@ -1433,9 +1433,11 @@ methods. These values can be specified in any of the following ways:
       :func:`time.time`.
     * A :class:`datetime.datetime` value.
     * A string value of ``now`` to request the current time.
-    * A string value in the form ``YYYYMMDD`` to specify an absolute date.
-    * A string value in the form ``YYYYMMDDHHMMSS`` to specify an
-      absolute date and time.
+    * A string value in the form ``YYYYMMDD[Z]`` to specify midnight on the
+      requested date. If Z is present, the time will be based on the UTC time
+      zone. Otherwise, it will be based on the system's local time zone.
+    * A string value in the form ``YYYYMMDDHHMMSS[Z]`` to specify an
+      absolute date and time with the optional Z meaning the same as above.
     * A time interval described in :ref:`SpecifyingTimeIntervals` which is
       interpreted as a relative time from now. This value can be negative
       to refer to times in the past or positive to refer to times in the
@@ -1901,6 +1903,80 @@ Authorized keys classes/functions
 
 .. autofunction:: import_authorized_keys
 .. autofunction:: read_authorized_keys
+
+.. index:: SSHSIG support
+.. _SSHSIGSupport:
+
+SSHSIG Support
+==============
+
+AsyncSSH supports the creation and validation of SSHSIG signatures as
+well as OpenSSH-style allowed signers files which specify the set of
+keys allowed to perform signing as a given principal. SSH certificates
+can also be used for signing by using the "cert-authority" option in
+the signers file. Other supported options include a "namespaces" option
+to restrict which namespaces a signing key can be used for, and
+"valid-after" and "valid-before" options to restrict how long a signing
+key is valid for.
+
+When using SSH certificates in allowed signers, the principal is also
+matched against the principals listed in the certificate and the
+certificate's validity period is also enforced.
+
+.. index:: Specifying allowed signers
+.. _SpecifyingAllowedSigners:
+
+Specifying allowed signers
+--------------------------
+
+Allowed signers may be passed into AsyncSSH via the `allowed_signers`
+argument to :func:`validate_sshsig`.
+
+Allowed signers can be provided as a byte string in allowed signers format,
+the name of a file or list of files to read allowed signers from, or an
+:class:`SSHAllowedSigners` object which was previously imported from a
+string by calling :func:`import_allowed_signers` or read from files by
+calling :func:`read_allowed_signers`.
+
+Each line in allowed signers should consist of a wildcard pattern of
+principal names, an optional comma-separate list of options and a
+public key or certificate in OpenSSH format. These fields should be
+separated by whitespace.
+
+Supported options are:
+
+  * **cert-authority**
+
+    An indicator that this entry's public key is a certificate authority
+    and that signatures created using certificates signed by this CA
+    should be trusted.
+
+  * **namespaces**
+
+    The set of namespaces this entry's key is trusted for. Signatures
+    using this key should only be trusted if the namespace in the signature
+    matches the namespace patterns specified here.
+
+  * **valid-after**
+
+    An indicator that this entry's key is only valid after the specified
+    time. See :ref:`SpecifyingTimeValues` for allowed time specifications.
+
+  * **valid-before**
+
+    An indicator that this entry's key is only valid before the specified
+    time. See :ref:`SpecifyingTimeValues` for allowed time specifications.
+
+SSHSIG classes/functions
+------------------------
+
+.. autoclass:: SSHAllowedSigners()
+
+.. autofunction:: import_allowed_signers
+.. autofunction:: read_allowed_signers
+
+.. autofunction:: create_sshsig
+.. autofunction:: validate_sshsig
 
 .. index:: Logging
 .. _Logging:
